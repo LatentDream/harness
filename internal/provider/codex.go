@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"latentdream/harness/internal/llm"
 )
 
 const (
@@ -59,17 +61,23 @@ type codexCredential struct {
 }
 
 type codexResponsesRequest struct {
-	Model           string              `json:"model"`
-	Input           []codexInputMessage `json:"input"`
-	Store           bool                `json:"store"`
-	Stream          bool                `json:"stream"`
-	Instructions    string              `json:"instructions,omitempty"`
-	MaxOutputTokens int                 `json:"max_output_tokens,omitempty"`
+	Model           string           `json:"model"`
+	Input           []codexInputItem `json:"input"`
+	Store           bool             `json:"store"`
+	Stream          bool             `json:"stream"`
+	Instructions    string           `json:"instructions,omitempty"`
+	MaxOutputTokens int              `json:"max_output_tokens,omitempty"`
+	Tools           []codexTool      `json:"tools,omitempty"`
 }
 
-type codexInputMessage struct {
-	Role    string             `json:"role"`
-	Content []codexContentPart `json:"content"`
+type codexInputItem struct {
+	Type      string             `json:"type,omitempty"`
+	Role      string             `json:"role,omitempty"`
+	Content   []codexContentPart `json:"content,omitempty"`
+	CallID    string             `json:"call_id,omitempty"`
+	Name      string             `json:"name,omitempty"`
+	Arguments string             `json:"arguments,omitempty"`
+	Output    string             `json:"output,omitempty"`
 }
 
 type codexContentPart struct {
@@ -77,20 +85,32 @@ type codexContentPart struct {
 	Text string `json:"text"`
 }
 
-type codexResponsesResponse struct {
-	OutputText string `json:"output_text"`
-	Output     []struct {
-		Type    string `json:"type"`
-		Role    string `json:"role"`
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"output"`
+type codexTool struct {
+	Type        string     `json:"type"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Parameters  llm.Schema `json:"parameters"`
 }
 
-func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, model string, query Query) (Response, error) {
-	payload := codexRequest(model, query)
+type codexResponsesResponse struct {
+	OutputText string            `json:"output_text"`
+	Output     []codexOutputItem `json:"output"`
+}
+
+type codexOutputItem struct {
+	Type      string `json:"type"`
+	Role      string `json:"role"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	Content   []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, model string, request llm.Request) (Response, error) {
+	payload := codexRequest(model, request)
 	headers, err := m.codexHeaders(ctx, configured)
 	if err != nil {
 		return Response{}, err
@@ -101,44 +121,66 @@ func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, 
 		return Response{}, err
 	}
 
-	content, err := codexResponseContent(body)
+	message, err := codexResponseMessage(body)
 	if err != nil {
 		return Response{}, fmt.Errorf("decode provider %q response: %w", configured.name, err)
+	}
+	if message.Role == "" {
+		message.Role = codexResponseRole
 	}
 
 	return Response{
 		Provider: configured.name,
 		Model:    model,
-		Message:  Message{Role: codexResponseRole, Content: content},
+		Message:  message,
 		Raw:      body,
 	}, nil
 }
 
-func codexRequest(model string, query Query) codexResponsesRequest {
+func codexRequest(model string, input llm.Request) codexResponsesRequest {
 	request := codexResponsesRequest{
 		Model:           model,
-		Input:           make([]codexInputMessage, 0, len(query.Messages)),
+		Input:           make([]codexInputItem, 0, len(input.Messages)),
 		Store:           false,
 		Stream:          true,
-		MaxOutputTokens: query.MaxTokens,
+		MaxOutputTokens: input.MaxTokens,
+		Tools:           codexTools(input.Tools),
 	}
 	instructions := make([]string, 0)
 
-	for _, message := range query.Messages {
+	for _, message := range input.Messages {
 		role := strings.ToLower(strings.TrimSpace(message.Role))
 		switch role {
 		case "system", "developer":
 			instructions = append(instructions, message.Content)
-		case "assistant":
-			request.Input = append(request.Input, codexInputMessage{
-				Role: role,
-				Content: []codexContentPart{{
-					Type: "output_text",
-					Text: message.Content,
-				}},
+		case "tool":
+			request.Input = append(request.Input, codexInputItem{
+				Type:   "function_call_output",
+				CallID: message.ToolCallID,
+				Output: message.Content,
 			})
+		case "assistant":
+			if message.Content != "" {
+				request.Input = append(request.Input, codexInputItem{
+					Type: "message",
+					Role: role,
+					Content: []codexContentPart{{
+						Type: "output_text",
+						Text: message.Content,
+					}},
+				})
+			}
+			for _, call := range message.ToolCalls {
+				request.Input = append(request.Input, codexInputItem{
+					Type:      "function_call",
+					CallID:    call.ID,
+					Name:      call.Name,
+					Arguments: rawArgumentsString(call.Arguments),
+				})
+			}
 		default:
-			request.Input = append(request.Input, codexInputMessage{
+			request.Input = append(request.Input, codexInputItem{
+				Type: "message",
 				Role: role,
 				Content: []codexContentPart{{
 					Type: "input_text",
@@ -150,6 +192,26 @@ func codexRequest(model string, query Query) codexResponsesRequest {
 
 	request.Instructions = strings.Join(instructions, "\n\n")
 	return request
+}
+
+func codexTools(definitions []llm.ToolDefinition) []codexTool {
+	if len(definitions) == 0 {
+		return nil
+	}
+
+	tools := make([]codexTool, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name == "" {
+			continue
+		}
+		tools = append(tools, codexTool{
+			Type:        "function",
+			Name:        definition.Name,
+			Description: definition.Description,
+			Parameters:  definition.Parameters,
+		})
+	}
+	return tools
 }
 
 func codexPath(configured configuredProvider) string {
@@ -357,22 +419,43 @@ func parseCodexClaims(token string) (codexClaims, bool) {
 }
 
 func codexResponseContent(body []byte) (string, error) {
-	trimmed := strings.TrimSpace(string(body))
-	if strings.HasPrefix(trimmed, "event:") || strings.HasPrefix(trimmed, "data:") || strings.Contains(trimmed, "\ndata:") {
-		return codexStreamResponseContent(body)
-	}
-
-	return codexJSONResponseContent(body)
-}
-
-func codexJSONResponseContent(body []byte) (string, error) {
-	var decoded codexResponsesResponse
-	if err := json.Unmarshal(body, &decoded); err != nil {
+	message, err := codexResponseMessage(body)
+	if err != nil {
 		return "", err
 	}
+	if message.Content == "" {
+		return "", errors.New("codex response contained no text output")
+	}
+	return message.Content, nil
+}
 
+func codexResponseMessage(body []byte) (llm.Message, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if strings.HasPrefix(trimmed, "event:") || strings.HasPrefix(trimmed, "data:") || strings.Contains(trimmed, "\ndata:") {
+		return codexStreamResponseMessage(body)
+	}
+
+	return codexJSONResponseMessage(body)
+}
+
+func codexJSONResponseMessage(body []byte) (llm.Message, error) {
+	var decoded codexResponsesResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return llm.Message{}, err
+	}
+
+	content := codexJSONText(decoded)
+	calls := codexToolCalls(decoded.Output)
+	if content == "" && len(calls) == 0 {
+		return llm.Message{}, errors.New("codex response contained no output")
+	}
+
+	return llm.Message{Role: codexResponseRole, Content: content, ToolCalls: calls}, nil
+}
+
+func codexJSONText(decoded codexResponsesResponse) string {
 	if strings.TrimSpace(decoded.OutputText) != "" {
-		return decoded.OutputText, nil
+		return decoded.OutputText
 	}
 
 	parts := make([]string, 0)
@@ -393,18 +476,53 @@ func codexJSONResponseContent(body []byte) (string, error) {
 		}
 	}
 
-	if len(parts) == 0 {
-		return "", errors.New("codex response contained no text output")
-	}
-
-	return strings.Join(parts, "\n"), nil
+	return strings.Join(parts, "\n")
 }
 
-func codexStreamResponseContent(body []byte) (string, error) {
+func codexToolCalls(items []codexOutputItem) []llm.ToolCall {
+	calls := make([]llm.ToolCall, 0)
+	for _, item := range items {
+		if item.Type != "function_call" || item.Name == "" {
+			continue
+		}
+		calls = append(calls, llm.ToolCall{
+			ID:        item.CallID,
+			Name:      item.Name,
+			Arguments: rawArguments(item.Arguments),
+		})
+	}
+	if len(calls) == 0 {
+		return nil
+	}
+	return calls
+}
+
+type codexStreamCall struct {
+	ID        string
+	Name      string
+	Arguments string
+}
+
+func codexStreamResponseMessage(body []byte) (llm.Message, error) {
 	var deltas strings.Builder
 	finalText := ""
+	var finalMessage *llm.Message
+	calls := make(map[string]*codexStreamCall)
+	callOrder := make([]string, 0)
 	dataLines := make([]string, 0)
 	scanner := bufio.NewScanner(strings.NewReader(string(body)))
+	streamCall := func(key string) *codexStreamCall {
+		if key == "" {
+			key = fmt.Sprintf("call_%d", len(callOrder)+1)
+		}
+		call, ok := calls[key]
+		if !ok {
+			call = &codexStreamCall{}
+			calls[key] = call
+			callOrder = append(callOrder, key)
+		}
+		return call
+	}
 
 	process := func() error {
 		if len(dataLines) == 0 {
@@ -417,12 +535,21 @@ func codexStreamResponseContent(body []byte) (string, error) {
 		}
 
 		var event struct {
-			Type       string          `json:"type"`
-			Delta      string          `json:"delta"`
-			Text       string          `json:"text"`
-			OutputText string          `json:"output_text"`
-			Response   json.RawMessage `json:"response"`
-			Error      *struct {
+			Type       string `json:"type"`
+			Delta      string `json:"delta"`
+			Text       string `json:"text"`
+			OutputText string `json:"output_text"`
+			Arguments  string `json:"arguments"`
+			ItemID     string `json:"item_id"`
+			Item       *struct {
+				ID        string `json:"id"`
+				Type      string `json:"type"`
+				CallID    string `json:"call_id"`
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"item"`
+			Response json.RawMessage `json:"response"`
+			Error    *struct {
 				Message string `json:"message"`
 				Code    string `json:"code"`
 			} `json:"error"`
@@ -436,7 +563,7 @@ func codexStreamResponseContent(body []byte) (string, error) {
 			}
 			return fmt.Errorf("codex stream error: %s", event.Error.Message)
 		}
-		if event.Delta != "" {
+		if event.Delta != "" && (event.Type == "" || strings.Contains(event.Type, "output_text")) {
 			deltas.WriteString(event.Delta)
 		}
 		if event.OutputText != "" {
@@ -445,10 +572,28 @@ func codexStreamResponseContent(body []byte) (string, error) {
 		if event.Text != "" && strings.Contains(event.Type, "output_text") {
 			finalText = event.Text
 		}
+		if event.Item != nil && event.Item.Type == "function_call" {
+			key := event.Item.ID
+			if key == "" {
+				key = event.Item.CallID
+			}
+			call := streamCall(key)
+			call.ID = event.Item.CallID
+			call.Name = event.Item.Name
+			call.Arguments = event.Item.Arguments
+		}
+		if strings.Contains(event.Type, "function_call_arguments") {
+			call := streamCall(event.ItemID)
+			if event.Arguments != "" {
+				call.Arguments = event.Arguments
+			} else if event.Delta != "" {
+				call.Arguments += event.Delta
+			}
+		}
 		if len(event.Response) > 0 {
-			content, err := codexJSONResponseContent(event.Response)
+			message, err := codexJSONResponseMessage(event.Response)
 			if err == nil {
-				finalText = content
+				finalMessage = &message
 			}
 		}
 
@@ -459,7 +604,7 @@ func codexStreamResponseContent(body []byte) (string, error) {
 		line := strings.TrimRight(scanner.Text(), "\r")
 		if line == "" {
 			if err := process(); err != nil {
-				return "", err
+				return llm.Message{}, err
 			}
 			continue
 		}
@@ -468,20 +613,40 @@ func codexStreamResponseContent(body []byte) (string, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("read codex stream: %w", err)
+		return llm.Message{}, fmt.Errorf("read codex stream: %w", err)
 	}
 	if err := process(); err != nil {
-		return "", err
+		return llm.Message{}, err
+	}
+
+	if finalMessage != nil {
+		return *finalMessage, nil
+	}
+
+	toolCalls := make([]llm.ToolCall, 0, len(callOrder))
+	for _, key := range callOrder {
+		call := calls[key]
+		if call == nil || call.Name == "" {
+			continue
+		}
+		toolCalls = append(toolCalls, llm.ToolCall{
+			ID:        call.ID,
+			Name:      call.Name,
+			Arguments: rawArguments(call.Arguments),
+		})
+	}
+	if len(toolCalls) > 0 {
+		return llm.Message{Role: codexResponseRole, ToolCalls: toolCalls}, nil
 	}
 
 	if deltas.Len() > 0 {
-		return deltas.String(), nil
+		return llm.Message{Role: codexResponseRole, Content: deltas.String()}, nil
 	}
 	if finalText != "" {
-		return finalText, nil
+		return llm.Message{Role: codexResponseRole, Content: finalText}, nil
 	}
 
-	return "", errors.New("codex stream contained no text output")
+	return llm.Message{}, errors.New("codex stream contained no output")
 }
 
 func expandHome(path string) (string, error) {

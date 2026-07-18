@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"latentdream/harness/internal/config"
+	"latentdream/harness/internal/llm"
 )
 
 func TestNewCodexDefaultsModelAndAuth(t *testing.T) {
@@ -30,7 +31,7 @@ func TestNewCodexDefaultsModelAndAuth(t *testing.T) {
 }
 
 func TestCodexRequestIncludesRequiredResponseFlags(t *testing.T) {
-	payload := codexRequest(defaultCodexModel, Query{Messages: []Message{{Role: "user", Content: "hello"}}})
+	payload := codexRequest(defaultCodexModel, llm.Request{Messages: []llm.Message{{Role: "user", Content: "hello"}}})
 	contents, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal codex request: %v", err)
@@ -53,6 +54,30 @@ func TestCodexRequestIncludesRequiredResponseFlags(t *testing.T) {
 	}
 	if stream != true {
 		t.Fatalf("expected stream true, got %#v", stream)
+	}
+}
+
+func TestCodexRequestIncludesToolsAndToolMessages(t *testing.T) {
+	payload := codexRequest(defaultCodexModel, llm.Request{
+		Messages: []llm.Message{
+			{Role: "user", Content: "read it"},
+			{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "read", Arguments: json.RawMessage(`{"filePath":"/tmp/sample.txt"}`)}}},
+			{Role: "tool", ToolCallID: "call_1", Content: "tool result"},
+		},
+		Tools: []llm.ToolDefinition{readDefinitionForTest()},
+	})
+
+	if len(payload.Tools) != 1 || payload.Tools[0].Type != "function" || payload.Tools[0].Name != "read" {
+		t.Fatalf("unexpected tools: %#v", payload.Tools)
+	}
+	if len(payload.Input) != 3 {
+		t.Fatalf("expected three input items, got %#v", payload.Input)
+	}
+	if payload.Input[1].Type != "function_call" || payload.Input[1].CallID != "call_1" || payload.Input[1].Name != "read" {
+		t.Fatalf("unexpected function call input: %#v", payload.Input[1])
+	}
+	if payload.Input[2].Type != "function_call_output" || payload.Input[2].CallID != "call_1" || payload.Input[2].Output != "tool result" {
+		t.Fatalf("unexpected function output input: %#v", payload.Input[2])
 	}
 }
 
@@ -128,10 +153,10 @@ func TestSendCodexUsesOpencodeAuthFile(t *testing.T) {
 		if len(request.Input) != 2 {
 			t.Fatalf("expected two input messages, got %#v", request.Input)
 		}
-		if request.Input[0].Role != "user" || request.Input[0].Content[0] != (codexContentPart{Type: "input_text", Text: "hello"}) {
+		if request.Input[0].Type != "message" || request.Input[0].Role != "user" || request.Input[0].Content[0] != (codexContentPart{Type: "input_text", Text: "hello"}) {
 			t.Fatalf("unexpected user message: %#v", request.Input[0])
 		}
-		if request.Input[1].Role != "assistant" || request.Input[1].Content[0] != (codexContentPart{Type: "output_text", Text: "previous"}) {
+		if request.Input[1].Type != "message" || request.Input[1].Role != "assistant" || request.Input[1].Content[0] != (codexContentPart{Type: "output_text", Text: "previous"}) {
 			t.Fatalf("unexpected assistant message: %#v", request.Input[1])
 		}
 
@@ -154,8 +179,8 @@ func TestSendCodexUsesOpencodeAuthFile(t *testing.T) {
 		t.Fatalf("expected codex provider to initialize, got %v", err)
 	}
 
-	response, err := provider.Send(context.Background(), Query{
-		Messages: []Message{
+	response, err := provider.Send(context.Background(), llm.Request{
+		Messages: []llm.Message{
 			{Role: "system", Content: "be concise"},
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "previous"},
@@ -165,7 +190,7 @@ func TestSendCodexUsesOpencodeAuthFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}
-	if response.Message != (Message{Role: "assistant", Content: "codex response"}) {
+	if response.Message.Role != "assistant" || response.Message.Content != "codex response" || len(response.Message.ToolCalls) != 0 {
 		t.Fatalf("unexpected response message: %#v", response.Message)
 	}
 }
@@ -239,7 +264,7 @@ func TestSendCodexRefreshesExpiredOpencodeAuth(t *testing.T) {
 		t.Fatalf("expected codex provider to initialize, got %v", err)
 	}
 
-	response, err := provider.Send(context.Background(), Query{Messages: []Message{{Role: "user", Content: "hello"}}})
+	response, err := provider.Send(context.Background(), llm.Request{Messages: []llm.Message{{Role: "user", Content: "hello"}}})
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}

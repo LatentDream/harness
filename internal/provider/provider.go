@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"latentdream/harness/internal/config"
+	"latentdream/harness/internal/llm"
 )
 
 const (
@@ -33,7 +34,7 @@ type Provider interface {
 	Current() Selection
 	Available() []Selection
 	Use(providerName string, modelName string) error
-	Send(ctx context.Context, query Query) (Response, error)
+	Send(ctx context.Context, request llm.Request) (Response, error)
 }
 
 type Selection struct {
@@ -41,21 +42,10 @@ type Selection struct {
 	Model    string `json:"model"`
 }
 
-type Query struct {
-	Messages    []Message `json:"messages"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-}
-
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 type Response struct {
 	Provider string          `json:"provider"`
 	Model    string          `json:"model"`
-	Message  Message         `json:"message"`
+	Message  llm.Message     `json:"message"`
 	Raw      json.RawMessage `json:"raw,omitempty"`
 }
 
@@ -166,8 +156,8 @@ func (m *manager) Use(providerName string, modelName string) error {
 	return fmt.Errorf("provider %q is not configured or not enabled", providerName)
 }
 
-func (m *manager) Send(ctx context.Context, query Query) (Response, error) {
-	if err := validateQuery(query); err != nil {
+func (m *manager) Send(ctx context.Context, request llm.Request) (Response, error) {
+	if err := validateRequest(request); err != nil {
 		return Response{}, err
 	}
 
@@ -178,11 +168,11 @@ func (m *manager) Send(ctx context.Context, query Query) (Response, error) {
 
 	switch configured.kind {
 	case providerKindOpenAICompatible:
-		return m.sendOpenAICompatible(ctx, configured, model, query)
+		return m.sendOpenAICompatible(ctx, configured, model, request)
 	case providerKindAnthropic:
-		return m.sendAnthropic(ctx, configured, model, query)
+		return m.sendAnthropic(ctx, configured, model, request)
 	case providerKindCodex:
-		return m.sendCodex(ctx, configured, model, query)
+		return m.sendCodex(ctx, configured, model, request)
 	default:
 		return Response{}, fmt.Errorf("provider %q has unsupported type %q", configured.name, configured.kind)
 	}
@@ -354,14 +344,14 @@ func modelConfigured(configured configuredProvider, modelName string) bool {
 	return false
 }
 
-func validateQuery(query Query) error {
-	if len(query.Messages) == 0 {
-		return errors.New("query must include at least one message")
+func validateRequest(request llm.Request) error {
+	if len(request.Messages) == 0 {
+		return errors.New("request must include at least one message")
 	}
 
-	for index, message := range query.Messages {
+	for index, message := range request.Messages {
 		if strings.TrimSpace(message.Role) == "" {
-			return fmt.Errorf("query message %d role must not be empty", index)
+			return fmt.Errorf("request message %d role must not be empty", index)
 		}
 	}
 
@@ -369,24 +359,55 @@ func validateQuery(query Query) error {
 }
 
 type openAIChatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Model       string              `json:"model"`
+	Messages    []openAIChatMessage `json:"messages"`
+	Tools       []openAITool        `json:"tools,omitempty"`
+	Temperature *float64            `json:"temperature,omitempty"`
+	MaxTokens   int                 `json:"max_tokens,omitempty"`
 }
 
 type openAIChatResponse struct {
 	Choices []struct {
-		Message Message `json:"message"`
+		Message openAIChatMessage `json:"message"`
 	} `json:"choices"`
 }
 
-func (m *manager) sendOpenAICompatible(ctx context.Context, configured configuredProvider, model string, query Query) (Response, error) {
+type openAIChatMessage struct {
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+}
+
+type openAITool struct {
+	Type     string                   `json:"type"`
+	Function openAIFunctionDefinition `json:"function"`
+}
+
+type openAIFunctionDefinition struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Parameters  llm.Schema `json:"parameters"`
+}
+
+type openAIToolCall struct {
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"`
+	Function openAIToolCallFunction `json:"function"`
+}
+
+type openAIToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+func (m *manager) sendOpenAICompatible(ctx context.Context, configured configuredProvider, model string, request llm.Request) (Response, error) {
 	payload := openAIChatRequest{
 		Model:       model,
-		Messages:    query.Messages,
-		Temperature: query.Temperature,
-		MaxTokens:   query.MaxTokens,
+		Messages:    openAIChatMessages(request.Messages),
+		Tools:       openAITools(request.Tools),
+		Temperature: request.Temperature,
+		MaxTokens:   request.MaxTokens,
 	}
 
 	headers, err := openAIHeaders(configured)
@@ -407,12 +428,96 @@ func (m *manager) sendOpenAICompatible(ctx context.Context, configured configure
 		return Response{}, fmt.Errorf("provider %q returned no choices", configured.name)
 	}
 
-	message := decoded.Choices[0].Message
+	message := messageFromOpenAI(decoded.Choices[0].Message)
 	if message.Role == "" {
 		message.Role = "assistant"
 	}
 
 	return Response{Provider: configured.name, Model: model, Message: message, Raw: body}, nil
+}
+
+func openAIChatMessages(messages []llm.Message) []openAIChatMessage {
+	converted := make([]openAIChatMessage, 0, len(messages))
+	for _, message := range messages {
+		converted = append(converted, openAIChatMessage{
+			Role:       message.Role,
+			Content:    message.Content,
+			ToolCalls:  openAIToolCalls(message.ToolCalls),
+			ToolCallID: message.ToolCallID,
+		})
+	}
+	return converted
+}
+
+func openAITools(definitions []llm.ToolDefinition) []openAITool {
+	if len(definitions) == 0 {
+		return nil
+	}
+
+	tools := make([]openAITool, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name == "" {
+			continue
+		}
+		tools = append(tools, openAITool{
+			Type: "function",
+			Function: openAIFunctionDefinition{
+				Name:        definition.Name,
+				Description: definition.Description,
+				Parameters:  definition.Parameters,
+			},
+		})
+	}
+	return tools
+}
+
+func openAIToolCalls(calls []llm.ToolCall) []openAIToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+
+	converted := make([]openAIToolCall, 0, len(calls))
+	for _, call := range calls {
+		converted = append(converted, openAIToolCall{
+			ID:   call.ID,
+			Type: "function",
+			Function: openAIToolCallFunction{
+				Name:      call.Name,
+				Arguments: rawArgumentsString(call.Arguments),
+			},
+		})
+	}
+	return converted
+}
+
+func messageFromOpenAI(message openAIChatMessage) llm.Message {
+	return llm.Message{
+		Role:      message.Role,
+		Content:   message.Content,
+		ToolCalls: toolCallsFromOpenAI(message.ToolCalls),
+	}
+}
+
+func toolCallsFromOpenAI(calls []openAIToolCall) []llm.ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+
+	converted := make([]llm.ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if call.Function.Name == "" {
+			continue
+		}
+		converted = append(converted, llm.ToolCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: rawArguments(call.Function.Arguments),
+		})
+	}
+	if len(converted) == 0 {
+		return nil
+	}
+	return converted
 }
 
 func openAIHeaders(configured configuredProvider) (map[string]string, error) {
@@ -429,29 +534,56 @@ func openAIHeaders(configured configuredProvider) (map[string]string, error) {
 }
 
 type anthropicMessageRequest struct {
-	Model       string    `json:"model"`
-	MaxTokens   int       `json:"max_tokens"`
-	System      string    `json:"system,omitempty"`
-	Messages    []Message `json:"messages"`
-	Temperature *float64  `json:"temperature,omitempty"`
+	Model       string                    `json:"model"`
+	MaxTokens   int                       `json:"max_tokens"`
+	System      string                    `json:"system,omitempty"`
+	Messages    []anthropicRequestMessage `json:"messages"`
+	Tools       []anthropicTool           `json:"tools,omitempty"`
+	Temperature *float64                  `json:"temperature,omitempty"`
 }
 
 type anthropicMessageResponse struct {
-	Role    string `json:"role"`
-	Model   string `json:"model"`
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
+	Role    string                     `json:"role"`
+	Model   string                     `json:"model"`
+	Content []anthropicResponseContent `json:"content"`
 }
 
-func (m *manager) sendAnthropic(ctx context.Context, configured configuredProvider, model string, query Query) (Response, error) {
-	messages, system := anthropicMessages(query.Messages)
+type anthropicRequestMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+type anthropicTool struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	InputSchema llm.Schema `json:"input_schema"`
+}
+
+type anthropicContentPart struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+}
+
+type anthropicResponseContent struct {
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
+
+func (m *manager) sendAnthropic(ctx context.Context, configured configuredProvider, model string, request llm.Request) (Response, error) {
+	messages, system := anthropicMessages(request.Messages)
 	if len(messages) == 0 {
 		return Response{}, errors.New("anthropic query must include at least one non-system message")
 	}
 
-	maxTokens := query.MaxTokens
+	maxTokens := request.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = defaultMaxTokens
 	}
@@ -461,7 +593,8 @@ func (m *manager) sendAnthropic(ctx context.Context, configured configuredProvid
 		MaxTokens:   maxTokens,
 		System:      system,
 		Messages:    messages,
-		Temperature: query.Temperature,
+		Tools:       anthropicTools(request.Tools),
+		Temperature: request.Temperature,
 	}
 
 	headers, err := anthropicHeaders(configured)
@@ -479,21 +612,19 @@ func (m *manager) sendAnthropic(ctx context.Context, configured configuredProvid
 		return Response{}, fmt.Errorf("decode provider %q response: %w", configured.name, err)
 	}
 
-	content := anthropicText(decoded.Content)
-	if content == "" {
-		return Response{}, fmt.Errorf("provider %q returned no text content", configured.name)
+	message := messageFromAnthropic(decoded)
+	if message.Role == "" {
+		message.Role = "assistant"
+	}
+	if message.Content == "" && len(message.ToolCalls) == 0 {
+		return Response{}, fmt.Errorf("provider %q returned no content", configured.name)
 	}
 
-	role := decoded.Role
-	if role == "" {
-		role = "assistant"
-	}
-
-	return Response{Provider: configured.name, Model: model, Message: Message{Role: role, Content: content}, Raw: body}, nil
+	return Response{Provider: configured.name, Model: model, Message: message, Raw: body}, nil
 }
 
-func anthropicMessages(messages []Message) ([]Message, string) {
-	converted := make([]Message, 0, len(messages))
+func anthropicMessages(messages []llm.Message) ([]anthropicRequestMessage, string) {
+	converted := make([]anthropicRequestMessage, 0, len(messages))
 	systemParts := make([]string, 0)
 
 	for _, message := range messages {
@@ -502,16 +633,69 @@ func anthropicMessages(messages []Message) ([]Message, string) {
 			continue
 		}
 
-		converted = append(converted, message)
+		if strings.EqualFold(message.Role, "tool") {
+			converted = append(converted, anthropicRequestMessage{
+				Role: "user",
+				Content: []anthropicContentPart{{
+					Type:      "tool_result",
+					ToolUseID: message.ToolCallID,
+					Content:   message.Content,
+				}},
+			})
+			continue
+		}
+
+		if len(message.ToolCalls) > 0 {
+			parts := make([]anthropicContentPart, 0, len(message.ToolCalls)+1)
+			if message.Content != "" {
+				parts = append(parts, anthropicContentPart{Type: "text", Text: message.Content})
+			}
+			for _, call := range message.ToolCalls {
+				parts = append(parts, anthropicContentPart{
+					Type:  "tool_use",
+					ID:    call.ID,
+					Name:  call.Name,
+					Input: rawArgumentsFromJSON(call.Arguments),
+				})
+			}
+			converted = append(converted, anthropicRequestMessage{Role: message.Role, Content: parts})
+			continue
+		}
+
+		converted = append(converted, anthropicRequestMessage{Role: message.Role, Content: message.Content})
 	}
 
 	return converted, strings.Join(systemParts, "\n\n")
 }
 
-func anthropicText(content []struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}) string {
+func anthropicTools(definitions []llm.ToolDefinition) []anthropicTool {
+	if len(definitions) == 0 {
+		return nil
+	}
+
+	tools := make([]anthropicTool, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Name == "" {
+			continue
+		}
+		tools = append(tools, anthropicTool{
+			Name:        definition.Name,
+			Description: definition.Description,
+			InputSchema: definition.Parameters,
+		})
+	}
+	return tools
+}
+
+func messageFromAnthropic(response anthropicMessageResponse) llm.Message {
+	return llm.Message{
+		Role:      response.Role,
+		Content:   anthropicText(response.Content),
+		ToolCalls: toolCallsFromAnthropic(response.Content),
+	}
+}
+
+func anthropicText(content []anthropicResponseContent) string {
 	parts := make([]string, 0, len(content))
 	for _, item := range content {
 		if item.Type == "" || item.Type == "text" {
@@ -520,6 +704,24 @@ func anthropicText(content []struct {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+func toolCallsFromAnthropic(content []anthropicResponseContent) []llm.ToolCall {
+	calls := make([]llm.ToolCall, 0)
+	for _, item := range content {
+		if item.Type != "tool_use" || item.Name == "" {
+			continue
+		}
+		calls = append(calls, llm.ToolCall{
+			ID:        item.ID,
+			Name:      item.Name,
+			Arguments: rawArgumentsFromJSON(item.Input),
+		})
+	}
+	if len(calls) == 0 {
+		return nil
+	}
+	return calls
 }
 
 func anthropicHeaders(configured configuredProvider) (map[string]string, error) {
@@ -578,4 +780,28 @@ func authToken(configured configuredProvider) (string, error) {
 	}
 
 	return token, nil
+}
+
+func rawArgumentsString(arguments json.RawMessage) string {
+	return string(rawArgumentsFromJSON(arguments))
+}
+
+func rawArgumentsFromJSON(arguments json.RawMessage) json.RawMessage {
+	return rawArguments(string(arguments))
+}
+
+func rawArguments(arguments string) json.RawMessage {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" || trimmed == "null" {
+		return json.RawMessage(`{}`)
+	}
+	if json.Valid([]byte(trimmed)) {
+		return json.RawMessage(trimmed)
+	}
+
+	encoded, err := json.Marshal(trimmed)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return encoded
 }

@@ -1,5 +1,8 @@
 package session
 
-type Session interface {
+import "latentdream/harness/internal/llm"
 
+type Session struct {
+	SystemPrompt string
+	Conversation []llm.Message
 }

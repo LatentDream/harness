@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"latentdream/harness/internal/config"
+	"latentdream/harness/internal/llm"
 )
 
 func TestNewSelectsFirstEnabledProviderAndModel(t *testing.T) {
@@ -132,7 +133,7 @@ func TestSendOpenAICompatible(t *testing.T) {
 		if request.MaxTokens != 42 {
 			t.Fatalf("expected max_tokens 42, got %d", request.MaxTokens)
 		}
-		if len(request.Messages) != 1 || request.Messages[0] != (Message{Role: "user", Content: "hello"}) {
+		if len(request.Messages) != 1 || request.Messages[0].Role != "user" || request.Messages[0].Content != "hello" {
 			t.Fatalf("unexpected messages: %#v", request.Messages)
 		}
 
@@ -159,8 +160,8 @@ func TestSendOpenAICompatible(t *testing.T) {
 		t.Fatalf("expected provider to initialize, got %v", err)
 	}
 
-	response, err := provider.Send(context.Background(), Query{
-		Messages:  []Message{{Role: "user", Content: "hello"}},
+	response, err := provider.Send(context.Background(), llm.Request{
+		Messages:  []llm.Message{{Role: "user", Content: "hello"}},
 		MaxTokens: 42,
 	})
 	if err != nil {
@@ -169,8 +170,69 @@ func TestSendOpenAICompatible(t *testing.T) {
 	if response.Provider != "test-openai" || response.Model != "gpt-test" {
 		t.Fatalf("unexpected response selection: %#v", response)
 	}
-	if response.Message != (Message{Role: "assistant", Content: "world"}) {
+	if !reflect.DeepEqual(response.Message, llm.Message{Role: "assistant", Content: "world"}) {
 		t.Fatalf("unexpected response message: %#v", response.Message)
+	}
+}
+
+func TestSendOpenAICompatibleHandlesToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request openAIChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(request.Tools) != 1 || request.Tools[0].Type != "function" || request.Tools[0].Function.Name != "read" {
+			t.Fatalf("unexpected tools: %#v", request.Tools)
+		}
+		if request.Tools[0].Function.Parameters.Properties["filePath"].Type != "string" {
+			t.Fatalf("expected filePath string schema, got %#v", request.Tools[0].Function.Parameters)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role": "assistant",
+					"tool_calls": []map[string]any{{
+						"id":   "call_1",
+						"type": "function",
+						"function": map[string]string{
+							"name":      "read",
+							"arguments": `{"filePath":"/tmp/sample.txt"}`,
+						},
+					}},
+				},
+			}},
+		}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	provider, err := New([]config.Provider{{
+		Name:    "test-openai",
+		Type:    "openai-compatible",
+		BaseURL: server.URL,
+		Enabled: true,
+		Models:  []config.ProviderModel{{Name: "gpt-test"}},
+	}})
+	if err != nil {
+		t.Fatalf("expected provider to initialize, got %v", err)
+	}
+
+	response, err := provider.Send(context.Background(), llm.Request{
+		Messages: []llm.Message{{Role: "user", Content: "read it"}},
+		Tools:    []llm.ToolDefinition{readDefinitionForTest()},
+	})
+	if err != nil {
+		t.Fatalf("expected send to succeed, got %v", err)
+	}
+	if len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call, got %#v", response.Message.ToolCalls)
+	}
+	call := response.Message.ToolCalls[0]
+	if call.ID != "call_1" || call.Name != "read" || string(call.Arguments) != `{"filePath":"/tmp/sample.txt"}` {
+		t.Fatalf("unexpected tool call: %#v", call)
 	}
 }
 
@@ -192,7 +254,7 @@ func TestSendReturnsErrorWhenAuthEnvVarIsMissing(t *testing.T) {
 		t.Fatalf("expected provider to initialize, got %v", err)
 	}
 
-	_, err = provider.Send(context.Background(), Query{Messages: []Message{{Role: "user", Content: "hello"}}})
+	_, err = provider.Send(context.Background(), llm.Request{Messages: []llm.Message{{Role: "user", Content: "hello"}}})
 	if err == nil || !strings.Contains(err.Error(), "TEST_MISSING_OPENAI_KEY") {
 		t.Fatalf("expected missing auth env var error, got %v", err)
 	}
@@ -228,7 +290,7 @@ func TestSendAnthropic(t *testing.T) {
 		if request.System != "be concise" {
 			t.Fatalf("expected system prompt, got %q", request.System)
 		}
-		if len(request.Messages) != 1 || request.Messages[0] != (Message{Role: "user", Content: "hello"}) {
+		if len(request.Messages) != 1 || request.Messages[0].Role != "user" || request.Messages[0].Content != "hello" {
 			t.Fatalf("unexpected messages: %#v", request.Messages)
 		}
 
@@ -256,14 +318,82 @@ func TestSendAnthropic(t *testing.T) {
 		t.Fatalf("expected provider to initialize, got %v", err)
 	}
 
-	response, err := provider.Send(context.Background(), Query{Messages: []Message{
+	response, err := provider.Send(context.Background(), llm.Request{Messages: []llm.Message{
 		{Role: "system", Content: "be concise"},
 		{Role: "user", Content: "hello"},
 	}})
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}
-	if response.Message != (Message{Role: "assistant", Content: "hello back"}) {
+	if !reflect.DeepEqual(response.Message, llm.Message{Role: "assistant", Content: "hello back"}) {
 		t.Fatalf("unexpected response message: %#v", response.Message)
+	}
+}
+
+func TestSendAnthropicHandlesToolCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request anthropicMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if len(request.Tools) != 1 || request.Tools[0].Name != "read" {
+			t.Fatalf("unexpected tools: %#v", request.Tools)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"role": "assistant",
+			"content": []map[string]any{{
+				"type":  "tool_use",
+				"id":    "toolu_1",
+				"name":  "read",
+				"input": map[string]string{"filePath": "/tmp/sample.txt"},
+			}},
+		}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	provider, err := New([]config.Provider{{
+		Name:    "anthropic",
+		Type:    "anthropic",
+		BaseURL: server.URL,
+		Enabled: true,
+		Models:  []config.ProviderModel{{Name: "claude-test"}},
+	}})
+	if err != nil {
+		t.Fatalf("expected provider to initialize, got %v", err)
+	}
+
+	response, err := provider.Send(context.Background(), llm.Request{
+		Messages: []llm.Message{{Role: "user", Content: "read it"}},
+		Tools:    []llm.ToolDefinition{readDefinitionForTest()},
+	})
+	if err != nil {
+		t.Fatalf("expected send to succeed, got %v", err)
+	}
+	if len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call, got %#v", response.Message.ToolCalls)
+	}
+	call := response.Message.ToolCalls[0]
+	if call.ID != "toolu_1" || call.Name != "read" || string(call.Arguments) != `{"filePath":"/tmp/sample.txt"}` {
+		t.Fatalf("unexpected tool call: %#v", call)
+	}
+}
+
+func readDefinitionForTest() llm.ToolDefinition {
+	additionalProperties := false
+	return llm.ToolDefinition{
+		Name:        "read",
+		Description: "Read file contents",
+		Parameters: llm.Schema{
+			Type: "object",
+			Properties: map[string]llm.Schema{
+				"filePath": {Type: "string", Description: "The absolute path to read"},
+			},
+			Required:             []string{"filePath"},
+			AdditionalProperties: &additionalProperties,
+		},
 	}
 }

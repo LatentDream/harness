@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"latentdream/harness/internal/llm"
 )
 
 const defaultReadLimit = 2000
@@ -30,14 +32,14 @@ func NewReadTool() Tool {
 	return readTool{}
 }
 
-func (readTool) Definition() Definition {
+func (readTool) Definition() llm.ToolDefinition {
 	additionalProperties := false
-	return Definition{
+	return llm.ToolDefinition{
 		Name:        "read",
 		Description: strings.TrimSpace(readDescription),
-		Parameters: Schema{
+		Parameters: llm.Schema{
 			Type: "object",
-			Properties: map[string]Schema{
+			Properties: map[string]llm.Schema{
 				"filePath": {
 					Type:        "string",
 					Description: "The absolute path to the file or directory to read",

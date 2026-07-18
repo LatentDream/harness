@@ -2,18 +2,23 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"latentdream/harness/internal/llm"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
 )
 
 func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "  hello  "}, {text: "/exit"}}}
-	aiProvider := &fakeProvider{responses: []provider.Response{{Message: provider.Message{Role: "assistant", Content: "world"}}}}
+	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: "assistant", Content: "world"}}}}
 
 	runtime := New(aiProvider, userInput)
 	if err := runtime.Run(context.Background()); err != nil {
@@ -23,7 +28,7 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 	if len(aiProvider.queries) != 1 {
 		t.Fatalf("expected one query, got %d", len(aiProvider.queries))
 	}
-	expectedMessages := []provider.Message{{Role: "user", Content: "  hello  "}}
+	expectedMessages := []llm.Message{{Role: "user", Content: "  hello  "}}
 	if !reflect.DeepEqual(aiProvider.queries[0].Messages, expectedMessages) {
 		t.Fatalf("expected messages %#v, got %#v", expectedMessages, aiProvider.queries[0].Messages)
 	}
@@ -35,8 +40,8 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 func TestRunKeepsConversationHistory(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "hello"}, {text: "again"}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{responses: []provider.Response{
-		{Message: provider.Message{Role: "assistant", Content: "first"}},
-		{Message: provider.Message{Role: "assistant", Content: "second"}},
+		{Message: llm.Message{Role: "assistant", Content: "first"}},
+		{Message: llm.Message{Role: "assistant", Content: "second"}},
 	}}
 
 	runtime := New(aiProvider, userInput)
@@ -47,13 +52,58 @@ func TestRunKeepsConversationHistory(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two queries, got %d", len(aiProvider.queries))
 	}
-	expectedSecondQuery := []provider.Message{
+	expectedSecondQuery := []llm.Message{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "first"},
 		{Role: "user", Content: "again"},
 	}
 	if !reflect.DeepEqual(aiProvider.queries[1].Messages, expectedSecondQuery) {
 		t.Fatalf("expected second query %#v, got %#v", expectedSecondQuery, aiProvider.queries[1].Messages)
+	}
+}
+
+func TestRunExecutesReadToolCall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+	arguments, err := json.Marshal(map[string]string{"filePath": path})
+	if err != nil {
+		t.Fatalf("marshal tool arguments: %v", err)
+	}
+
+	userInput := &scriptedInput{receives: []receiveResult{{text: "read the file"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{responses: []provider.Response{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{
+			ID:        "call_1",
+			Name:      "read",
+			Arguments: arguments,
+		}}}},
+		{Message: llm.Message{Role: "assistant", Content: "read complete"}},
+	}}
+
+	runtime := New(aiProvider, userInput)
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected runtime to exit cleanly, got %v", err)
+	}
+
+	if !reflect.DeepEqual(userInput.responses, []string{"read complete"}) {
+		t.Fatalf("unexpected responses: %#v", userInput.responses)
+	}
+	if len(aiProvider.queries) != 2 {
+		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
+	}
+	if len(aiProvider.queries[0].Tools) != 1 || aiProvider.queries[0].Tools[0].Name != "read" {
+		t.Fatalf("expected read tool definition, got %#v", aiProvider.queries[0].Tools)
+	}
+
+	secondMessages := aiProvider.queries[1].Messages
+	if len(secondMessages) != 3 {
+		t.Fatalf("expected user, assistant tool call, and tool result, got %#v", secondMessages)
+	}
+	toolResult := secondMessages[2]
+	if toolResult.Role != "tool" || toolResult.ToolCallID != "call_1" || !strings.Contains(toolResult.Content, "1: hello") {
+		t.Fatalf("unexpected tool result message: %#v", toolResult)
 	}
 }
 
@@ -74,7 +124,7 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "broken"}, {text: "hello"}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{
 		errors:    []error{errors.New("provider down")},
-		responses: []provider.Response{{Message: provider.Message{Role: "assistant", Content: "world"}}},
+		responses: []provider.Response{{Message: llm.Message{Role: "assistant", Content: "world"}}},
 	}
 
 	runtime := New(aiProvider, userInput)
@@ -88,7 +138,7 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	expectedSecondQuery := []provider.Message{{Role: "user", Content: "hello"}}
+	expectedSecondQuery := []llm.Message{{Role: "user", Content: "hello"}}
 	if !reflect.DeepEqual(aiProvider.queries[1].Messages, expectedSecondQuery) {
 		t.Fatalf("expected failed message to be removed from history, got %#v", aiProvider.queries[1].Messages)
 	}
@@ -166,7 +216,7 @@ func (s *scriptedInput) WriteErrf(format string, args ...any) error {
 }
 
 type fakeProvider struct {
-	queries   []provider.Query
+	queries   []llm.Request
 	responses []provider.Response
 	errors    []error
 }
@@ -183,8 +233,8 @@ func (f *fakeProvider) Use(providerName string, modelName string) error {
 	return nil
 }
 
-func (f *fakeProvider) Send(ctx context.Context, query provider.Query) (provider.Response, error) {
-	query.Messages = append([]provider.Message(nil), query.Messages...)
+func (f *fakeProvider) Send(ctx context.Context, query llm.Request) (provider.Response, error) {
+	query.Messages = append([]llm.Message(nil), query.Messages...)
 	f.queries = append(f.queries, query)
 
 	if len(f.errors) > 0 {
@@ -195,7 +245,7 @@ func (f *fakeProvider) Send(ctx context.Context, query provider.Query) (provider
 		}
 	}
 	if len(f.responses) == 0 {
-		return provider.Response{Message: provider.Message{Role: "assistant", Content: ""}}, nil
+		return provider.Response{Message: llm.Message{Role: "assistant", Content: ""}}, nil
 	}
 
 	response := f.responses[0]

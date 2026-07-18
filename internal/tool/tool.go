@@ -3,29 +3,17 @@ package tool
 import (
 	"context"
 	"encoding/json"
+
+	"latentdream/harness/internal/llm"
 )
 
 type Tool interface {
-	Definition() Definition
+	Definition() llm.ToolDefinition
 	Execute(context.Context, json.RawMessage) (string, error)
 }
 
-type Definition struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Parameters  Schema `json:"parameters"`
-}
-
-type Schema struct {
-	Type                 string            `json:"type"`
-	Description          string            `json:"description,omitempty"`
-	Properties           map[string]Schema `json:"properties,omitempty"`
-	Required             []string          `json:"required,omitempty"`
-	AdditionalProperties *bool             `json:"additionalProperties,omitempty"`
-}
-
-func Definitions(tools []Tool) []Definition {
-	definitions := make([]Definition, 0, len(tools))
+func Definitions(tools []Tool) []llm.ToolDefinition {
+	definitions := make([]llm.ToolDefinition, 0, len(tools))
 	for _, item := range tools {
 		if item == nil {
 			continue
