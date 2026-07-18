@@ -1,0 +1,9 @@
+Read a file or directory from the local filesystem.
+
+Usage:
+- The filePath parameter must be an absolute path.
+- By default, file reads return up to 2000 lines from the start of the file.
+- Use offset to read later sections of a large file. offset is 1-indexed.
+- Use limit to control the maximum number of lines returned.
+- For files, content is returned with line numbers in the format "<line>: <content>".
+- For directories, entries are returned one per line and subdirectories have a trailing slash.
