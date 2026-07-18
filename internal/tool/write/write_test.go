@@ -1,4 +1,4 @@
-package tool
+package write
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 
 func TestWriteToolCreatesFileAndParents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "sample.txt")
-	output, err := NewWriteTool().Execute(context.Background(), writeArgs(t, path, "hello\nworld\n"))
+	output, err := New().Execute(context.Background(), writeArgs(t, path, "hello\nworld\n"))
 	if err != nil {
 		t.Fatalf("expected write to succeed, got %v", err)
 	}
@@ -29,7 +29,7 @@ func TestWriteToolOverwritesExistingFile(t *testing.T) {
 		t.Fatalf("write existing file: %v", err)
 	}
 
-	if _, err := NewWriteTool().Execute(context.Background(), writeArgs(t, path, "new contents")); err != nil {
+	if _, err := New().Execute(context.Background(), writeArgs(t, path, "new contents")); err != nil {
 		t.Fatalf("expected write to succeed, got %v", err)
 	}
 
@@ -38,7 +38,7 @@ func TestWriteToolOverwritesExistingFile(t *testing.T) {
 
 func TestWriteToolPreservesEmptyContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "empty.txt")
-	if _, err := NewWriteTool().Execute(context.Background(), writeArgs(t, path, "")); err != nil {
+	if _, err := New().Execute(context.Background(), writeArgs(t, path, "")); err != nil {
 		t.Fatalf("expected write to succeed, got %v", err)
 	}
 
@@ -49,21 +49,21 @@ func TestWriteToolRejectsNullContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sample.txt")
 	args := []byte(`{"filePath":` + mustJSONQuote(t, path) + `,"content":null}`)
 
-	_, err := NewWriteTool().Execute(context.Background(), args)
+	_, err := New().Execute(context.Background(), args)
 	if err == nil || !strings.Contains(err.Error(), "content must be a string") {
 		t.Fatalf("expected content string error, got %v", err)
 	}
 }
 
 func TestWriteToolRejectsRelativePath(t *testing.T) {
-	_, err := NewWriteTool().Execute(context.Background(), []byte(`{"filePath":"relative.txt","content":"hello"}`))
+	_, err := New().Execute(context.Background(), []byte(`{"filePath":"relative.txt","content":"hello"}`))
 	if err == nil || !strings.Contains(err.Error(), "filePath must be absolute") {
 		t.Fatalf("expected absolute path error, got %v", err)
 	}
 }
 
 func TestWriteToolDefinition(t *testing.T) {
-	definition := NewWriteTool().Definition()
+	definition := New().Definition()
 	if definition.Name != "write" {
 		t.Fatalf("expected write name, got %q", definition.Name)
 	}

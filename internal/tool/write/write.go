@@ -1,4 +1,4 @@
-package tool
+package write
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/tool/model"
+	"latentdream/harness/internal/tool/utils"
 )
 
 //go:embed write.txt
@@ -24,7 +26,7 @@ type writeParams struct {
 	content  string
 }
 
-func NewWriteTool() Tool {
+func New() model.Tool {
 	return writeTool{}
 }
 
@@ -95,7 +97,7 @@ func decodeWriteParams(args json.RawMessage) (writeParams, error) {
 		}
 	}
 
-	filePath, err := parseRequiredString(raw, "filePath")
+	filePath, err := utils.ParseRequiredString(raw, "filePath")
 	if err != nil {
 		return writeParams{}, err
 	}

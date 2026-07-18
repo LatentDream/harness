@@ -1,4 +1,4 @@
-package tool
+package read
 
 import (
 	"context"
@@ -15,7 +15,7 @@ func TestReadToolReadsFileWithOffsetAndLimit(t *testing.T) {
 		t.Fatalf("write sample file: %v", err)
 	}
 
-	output, err := NewReadTool().Execute(context.Background(), []byte(fmt.Sprintf(`{"filePath":%q,"offset":2,"limit":1}`, path)))
+	output, err := New().Execute(context.Background(), []byte(fmt.Sprintf(`{"filePath":%q,"offset":2,"limit":1}`, path)))
 	if err != nil {
 		t.Fatalf("expected read to succeed, got %v", err)
 	}
@@ -37,7 +37,7 @@ func TestReadToolReadsDirectory(t *testing.T) {
 		t.Fatalf("create subdir: %v", err)
 	}
 
-	output, err := NewReadTool().Execute(context.Background(), []byte(fmt.Sprintf(`{"filePath":%q}`, dir)))
+	output, err := New().Execute(context.Background(), []byte(fmt.Sprintf(`{"filePath":%q}`, dir)))
 	if err != nil {
 		t.Fatalf("expected read to succeed, got %v", err)
 	}
@@ -48,7 +48,7 @@ func TestReadToolReadsDirectory(t *testing.T) {
 }
 
 func TestReadToolRejectsRelativePath(t *testing.T) {
-	_, err := NewReadTool().Execute(context.Background(), []byte(`{"filePath":"relative.txt"}`))
+	_, err := New().Execute(context.Background(), []byte(`{"filePath":"relative.txt"}`))
 	if err == nil || !strings.Contains(err.Error(), "filePath must be absolute") {
 		t.Fatalf("expected absolute path error, got %v", err)
 	}

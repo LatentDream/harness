@@ -1,4 +1,4 @@
-package tool
+package read
 
 import (
 	"bytes"
@@ -9,10 +9,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/tool/model"
+	"latentdream/harness/internal/tool/utils"
 )
 
 const defaultReadLimit = 2000
@@ -28,7 +29,7 @@ type readParams struct {
 	limit    int
 }
 
-func NewReadTool() Tool {
+func New() model.Tool {
 	return readTool{}
 }
 
@@ -104,7 +105,7 @@ func decodeReadParams(args json.RawMessage) (readParams, error) {
 		}
 	}
 
-	filePath, err := parseRequiredString(raw, "filePath")
+	filePath, err := utils.ParseRequiredString(raw, "filePath")
 	if err != nil {
 		return readParams{}, err
 	}
@@ -113,7 +114,7 @@ func decodeReadParams(args json.RawMessage) (readParams, error) {
 		return readParams{}, errors.New("filePath must be absolute")
 	}
 
-	offset, ok, err := parseOptionalPositiveInt(raw, "offset")
+	offset, ok, err := utils.ParseOptionalPositiveInt(raw, "offset")
 	if err != nil {
 		return readParams{}, err
 	}
@@ -121,7 +122,7 @@ func decodeReadParams(args json.RawMessage) (readParams, error) {
 		offset = 1
 	}
 
-	limit, ok, err := parseOptionalPositiveInt(raw, "limit")
+	limit, ok, err := utils.ParseOptionalPositiveInt(raw, "limit")
 	if err != nil {
 		return readParams{}, err
 	}
@@ -130,54 +131,6 @@ func decodeReadParams(args json.RawMessage) (readParams, error) {
 	}
 
 	return readParams{filePath: filePath, offset: offset, limit: limit}, nil
-}
-
-func parseRequiredString(raw map[string]json.RawMessage, name string) (string, error) {
-	value, ok := raw[name]
-	if !ok {
-		return "", fmt.Errorf("%s is required", name)
-	}
-
-	var parsed string
-	if err := json.Unmarshal(value, &parsed); err != nil {
-		return "", fmt.Errorf("%s must be a string", name)
-	}
-	parsed = strings.TrimSpace(parsed)
-	if parsed == "" {
-		return "", fmt.Errorf("%s must not be empty", name)
-	}
-
-	return parsed, nil
-}
-
-func parseOptionalPositiveInt(raw map[string]json.RawMessage, name string) (int, bool, error) {
-	value, ok := raw[name]
-	if !ok {
-		return 0, false, nil
-	}
-
-	var parsed any
-	decoder := json.NewDecoder(bytes.NewReader(value))
-	decoder.UseNumber()
-	if err := decoder.Decode(&parsed); err != nil {
-		return 0, true, fmt.Errorf("%s must be a positive integer", name)
-	}
-
-	var text string
-	switch typed := parsed.(type) {
-	case json.Number:
-		text = typed.String()
-	case string:
-		text = strings.TrimSpace(typed)
-	default:
-		return 0, true, fmt.Errorf("%s must be a positive integer", name)
-	}
-
-	integer, err := strconv.Atoi(text)
-	if err != nil || integer < 1 {
-		return 0, true, fmt.Errorf("%s must be a positive integer", name)
-	}
-	return integer, true, nil
 }
 
 func readDirectory(path string) (string, error) {

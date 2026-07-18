@@ -1,18 +1,13 @@
 package tool
 
 import (
-	"context"
-	"encoding/json"
-
 	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/tool/model"
+	"latentdream/harness/internal/tool/read"
+	"latentdream/harness/internal/tool/write"
 )
 
-type Tool interface {
-	Definition() llm.ToolDefinition
-	Execute(context.Context, json.RawMessage) (string, error)
-}
-
-func Definitions(tools []Tool) []llm.ToolDefinition {
+func Definitions(tools []model.Tool) []llm.ToolDefinition {
 	definitions := make([]llm.ToolDefinition, 0, len(tools))
 	for _, item := range tools {
 		if item == nil {
@@ -23,8 +18,8 @@ func Definitions(tools []Tool) []llm.ToolDefinition {
 	return definitions
 }
 
-func ByName(tools []Tool) map[string]Tool {
-	byName := make(map[string]Tool, len(tools))
+func ByName(tools []model.Tool) map[string]model.Tool {
+	byName := make(map[string]model.Tool, len(tools))
 	for _, item := range tools {
 		if item == nil {
 			continue
@@ -37,6 +32,6 @@ func ByName(tools []Tool) map[string]Tool {
 	return byName
 }
 
-func NewDefault() []Tool {
-	return []Tool{NewReadTool(), NewWriteTool()}
+func NewDefault() []model.Tool {
+	return []model.Tool{read.New(), write.New()}
 }
