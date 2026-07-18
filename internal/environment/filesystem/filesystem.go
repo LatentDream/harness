@@ -5,3 +5,5 @@ type FS interface {
 	WriteFile(path string, data []byte) error
 	Exists(path string) (bool, error)
 }
+
+type Path string

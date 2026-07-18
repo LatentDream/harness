@@ -9,4 +9,7 @@ type Environment interface {
 	FS() filesystem.FS
 	Git() git.Repository
 	// Progress() progress.Store
+
+	Read() (string, error)
+	Write(string, filesystem.Path) error
 }
