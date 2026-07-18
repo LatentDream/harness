@@ -9,12 +9,12 @@ import (
 
 	"latentdream/harness/internal/environment"
 	"latentdream/harness/internal/input"
-	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/orchestrator"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/runtime/execution"
 	"latentdream/harness/internal/session"
+	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool"
 	"latentdream/harness/internal/tool/model"
 
@@ -30,7 +30,7 @@ type Runtime struct {
 	Tools       []model.Tool
 	Controller  orchestrator.Orchestrator
 	Environment environment.Environment
-	State       session.Session
+	Session     session.Session
 
 	input    input.IO
 	commands *command.Registry
@@ -58,8 +58,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 		r.Tools = tool.NewDefault()
 	}
 
-	history := make([]llm.Message, 0)
-	history = append(history, llm.Message{Role: llm.RoleSystem, Content: r.State.BuildSystemPrompt()})
+	r.Session.Init()
 
 	for {
 		select {
@@ -99,14 +98,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 
 		// Build context ~~~~~~~~~~~~~~~~~~
-		rollbackIndex := len(history)
-		history = append(history, llm.Message{Role: llm.RoleUser, Content: text})
+		rollbackIndex := len(r.Session.Conversation)
+		r.Session.Conversation = append(r.Session.Conversation, llm.Message{Role: llm.RoleUser, Content: text})
 
 		// inference + tool execution ~~~~~
 		var response string
-		history, response, err = r.inference(ctx, history)
+		response, err = r.inference(ctx)
 		if err != nil {
-			history = history[:rollbackIndex]
+			r.Session.Conversation = r.Session.Conversation[:rollbackIndex]
 			if writeErr := r.input.Write("error: " + err.Error()); writeErr != nil {
 				return r.input.WriteErrf("write error response: %w", writeErr)
 			}
@@ -119,7 +118,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runtime) inference(ctx context.Context, history []llm.Message) ([]llm.Message, string, error) {
+func (r *Runtime) inference(ctx context.Context) (string, error) {
 	definitions := tool.Definitions(r.Tools)
 	toolsByName := tool.ByName(r.Tools)
 
@@ -127,17 +126,17 @@ func (r *Runtime) inference(ctx context.Context, history []llm.Message) ([]llm.M
 		var response provider.Response
 		err := execution.WithStatus(r.input, "inference", func() error {
 			var sendErr error
-			response, sendErr = r.Provider.Send(ctx, llm.Request{Messages: history, Tools: definitions})
+			response, sendErr = r.Provider.Send(ctx, llm.Request{Messages: r.Session.Conversation, Tools: definitions})
 			return sendErr
 		})
 		if err != nil {
-			return history, "", err
+			return "", err
 		}
 
 		message := response.Message
 		if len(message.ToolCalls) == 0 {
-			history = append(history, message)
-			return history, message.Content, nil
+			r.Session.Conversation = append(r.Session.Conversation, message)
+			return message.Content, nil
 		}
 
 		for index := range message.ToolCalls {
@@ -145,18 +144,18 @@ func (r *Runtime) inference(ctx context.Context, history []llm.Message) ([]llm.M
 				message.ToolCalls[index].ID = fmt.Sprintf("call_%d", index+1)
 			}
 		}
-		history = append(history, message)
+		r.Session.Conversation = append(r.Session.Conversation, message)
 
 		for _, call := range message.ToolCalls {
 			toolMessage, err := execution.ToolCall(ctx, r.input, toolsByName, call)
 			if err != nil {
-				return history, "", err
+				return "", err
 			}
-			history = append(history, toolMessage)
+			r.Session.Conversation = append(r.Session.Conversation, toolMessage)
 		}
 	}
 
-	return history, "", errors.New("tool call limit exceeded")
+	return "", errors.New("tool call limit exceeded")
 }
 
 func (r *Runtime) validateInput(ctx context.Context) error {

@@ -34,6 +34,15 @@ func (s *Session) BuildSystemPrompt() string {
 	return prompt
 }
 
+func (s *Session) Init() {
+	if len(s.Conversation) == 0 {
+		s.Conversation = append(
+			s.Conversation,
+			llm.Message{Role: llm.RoleSystem, Content: s.BuildSystemPrompt()},
+		)
+	}
+}
+
 func readProjectContext(cwd string) string {
 	sections := make([]string, 0, len(projectContextFiles))
 	for _, filename := range projectContextFiles {

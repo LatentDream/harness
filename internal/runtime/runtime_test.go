@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
+	"latentdream/harness/internal/session/llm"
 )
 
 func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
@@ -30,7 +30,7 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 		t.Fatalf("expected one query, got %d", len(aiProvider.queries))
 	}
 	expectedMessages := []llm.Message{
-		{Role: llm.RoleSystem, Content: runtime.State.BuildSystemPrompt()},
+		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt()},
 		{Role: "user", Content: "  hello  "},
 	}
 	if !reflect.DeepEqual(aiProvider.queries[0].Messages, expectedMessages) {
@@ -57,13 +57,24 @@ func TestRunKeepsConversationHistory(t *testing.T) {
 		t.Fatalf("expected two queries, got %d", len(aiProvider.queries))
 	}
 	expectedSecondQuery := []llm.Message{
-		{Role: llm.RoleSystem, Content: runtime.State.BuildSystemPrompt()},
+		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt()},
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "first"},
 		{Role: "user", Content: "again"},
 	}
 	if !reflect.DeepEqual(aiProvider.queries[1].Messages, expectedSecondQuery) {
 		t.Fatalf("expected second query %#v, got %#v", expectedSecondQuery, aiProvider.queries[1].Messages)
+	}
+
+	expectedConversation := []llm.Message{
+		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt()},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "first"},
+		{Role: "user", Content: "again"},
+		{Role: "assistant", Content: "second"},
+	}
+	if !reflect.DeepEqual(runtime.Session.Conversation, expectedConversation) {
+		t.Fatalf("expected session conversation %#v, got %#v", expectedConversation, runtime.Session.Conversation)
 	}
 }
 
@@ -148,7 +159,7 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
 	expectedSecondQuery := []llm.Message{
-		{Role: llm.RoleSystem, Content: runtime.State.BuildSystemPrompt()},
+		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt()},
 		{Role: "user", Content: "hello"},
 	}
 	if !reflect.DeepEqual(aiProvider.queries[1].Messages, expectedSecondQuery) {
