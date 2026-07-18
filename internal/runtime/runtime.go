@@ -12,6 +12,7 @@ import (
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/orchestrator"
 	"latentdream/harness/internal/provider"
+	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/tool"
 )
@@ -25,7 +26,8 @@ type Runtime struct {
 	Environment environment.Environment
 	State       session.Session
 
-	input input.Input
+	input    input.Input
+	commands *command.Registry
 }
 
 func New(aiProvider provider.Provider, userInput input.Input) *Runtime {
@@ -33,18 +35,17 @@ func New(aiProvider provider.Provider, userInput input.Input) *Runtime {
 		id:       uuid.New(),
 		Provider: aiProvider,
 		input:    userInput,
+		commands: command.DefaultRegistry(),
 	}
 }
 
 func (r *Runtime) Run(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
+	if err := r.validateInput(ctx); err != nil {
+		return err
 	}
-	if r.Provider == nil {
-		return errors.New("runtime: provider is required")
-	}
-	if r.input == nil {
-		return errors.New("runtime: input is required")
+
+	if r.commands == nil {
+		r.commands = command.DefaultRegistry()
 	}
 
 	history := make([]provider.Message, 0)
@@ -67,8 +68,21 @@ func (r *Runtime) Run(ctx context.Context) error {
 		if commandText == "" {
 			continue
 		}
-		if isExitCommand(commandText) {
-			return nil
+
+		commandResult, handled, err := r.commands.Execute(commandText)
+		if handled {
+			if err != nil {
+				return fmt.Errorf("execute command: %w", err)
+			}
+			if commandResult.Output != "" {
+				if writeErr := r.input.Write(commandResult.Output); writeErr != nil {
+					return fmt.Errorf("write command output: %w", writeErr)
+				}
+			}
+			if commandResult.Action == command.ActionExit {
+				return nil
+			}
+			continue
 		}
 
 		history = append(history, provider.Message{Role: "user", Content: text})
@@ -88,11 +102,15 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 }
 
-func isExitCommand(text string) bool {
-	switch strings.ToLower(text) {
-	case "/exit", "/quit", ":q":
-		return true
-	default:
-		return false
+func (r *Runtime) validateInput(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	if r.Provider == nil {
+		return errors.New("runtime: provider is required")
+	}
+	if r.input == nil {
+		return errors.New("runtime: input is required")
+	}
+	return nil
 }
