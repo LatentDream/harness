@@ -93,8 +93,8 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	if len(aiProvider.queries[0].Tools) != 1 || aiProvider.queries[0].Tools[0].Name != "read" {
-		t.Fatalf("expected read tool definition, got %#v", aiProvider.queries[0].Tools)
+	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write"}) {
+		t.Fatalf("expected read and write tool definitions, got %#v", aiProvider.queries[0].Tools)
 	}
 
 	secondMessages := aiProvider.queries[1].Messages
@@ -219,6 +219,14 @@ type fakeProvider struct {
 	queries   []llm.Request
 	responses []provider.Response
 	errors    []error
+}
+
+func toolNames(definitions []llm.ToolDefinition) []string {
+	names := make([]string, 0, len(definitions))
+	for _, definition := range definitions {
+		names = append(names, definition.Name)
+	}
+	return names
 }
 
 func (f *fakeProvider) Current() provider.Selection {

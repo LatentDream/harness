@@ -7,7 +7,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/google/uuid"
 	"latentdream/harness/internal/environment"
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/llm"
@@ -16,6 +15,8 @@ import (
 	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/tool"
+
+	"github.com/google/uuid"
 )
 
 const maxToolRounds = 8
@@ -56,6 +57,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 
 	history := make([]llm.Message, 0)
+	history = append(history, llm.Message{Role: llm.RoleSystem, Content: r.State.BuildSystemPrompt()})
+
 	for {
 		select {
 		case <-ctx.Done():
