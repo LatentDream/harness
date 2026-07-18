@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/session/llm"
 )
 
 type Tool interface {

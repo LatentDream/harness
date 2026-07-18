@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/session/llm"
 )
 
 const (

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"latentdream/harness/internal/config"
-	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/session/llm"
 )
 
 func TestNewCodexDefaultsModelAndAuth(t *testing.T) {

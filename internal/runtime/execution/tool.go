@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"latentdream/harness/internal/input"
-	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool/model"
 )
 

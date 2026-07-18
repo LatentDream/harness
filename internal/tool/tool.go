@@ -1,7 +1,7 @@
 package tool
 
 import (
-	"latentdream/harness/internal/llm"
+	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool/model"
 	"latentdream/harness/internal/tool/read"
 	"latentdream/harness/internal/tool/write"
