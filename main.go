@@ -10,13 +10,13 @@ import (
 )
 
 func main() {
-	config, err := config.Load()
+	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := logging.Configure(config.Logging); err != nil {
+	if err := logging.Configure(cfg.Logging); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to configure logging: %v\n", err)
 		os.Exit(1)
 	}
