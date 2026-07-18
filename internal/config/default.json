@@ -7,5 +7,6 @@
     "output": "stdout",
     "disableCaller": false,
     "disableStacktrace": false
-  }
+  },
+  "providers": []
 }

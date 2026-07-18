@@ -28,6 +28,9 @@ func TestLoadUsesEmbeddedDefault(t *testing.T) {
 	if config.Logging.Output != "stdout" {
 		t.Fatalf("expected default output stdout, got %q", config.Logging.Output)
 	}
+	if len(config.Providers) != 0 {
+		t.Fatalf("expected no default providers, got %#v", config.Providers)
+	}
 }
 
 func TestConfigEnvNamesAreDerivedFromJSONTags(t *testing.T) {
@@ -44,6 +47,7 @@ func TestConfigEnvNamesAreDerivedFromJSONTags(t *testing.T) {
 		{[]string{"Logging", "InitialFields"}, "HARNESS_LOGGING_INITIAL_FIELDS"},
 		{[]string{"Logging", "DisableCaller"}, "HARNESS_LOGGING_DISABLE_CALLER"},
 		{[]string{"Logging", "DisableStacktrace"}, "HARNESS_LOGGING_DISABLE_STACKTRACE"},
+		{[]string{"Providers"}, "HARNESS_PROVIDERS"},
 	}
 
 	for _, test := range tests {
@@ -51,6 +55,61 @@ func TestConfigEnvNamesAreDerivedFromJSONTags(t *testing.T) {
 		if envName != test.expected {
 			t.Fatalf("expected env name %s for %v, got %s", test.expected, test.goFieldPath, envName)
 		}
+	}
+}
+
+func TestLoadReadsProviders(t *testing.T) {
+	clearConfigEnv(t)
+
+	configPath := writeConfig(t, t.TempDir(), "harness.json", `{
+		"providers": [
+			{
+				"name": "openai",
+				"type": "openai",
+				"base_url": "https://api.openai.com/v1",
+				"auth_token_env_var": "OPENAI_API_KEY",
+				"enabled": true,
+				"models": [
+					{"name": "gpt-4.1"},
+					{"name": "gpt-disabled", "enabled": false}
+				]
+			}
+		]
+	}`)
+	t.Setenv(ConfigPathEnv, configPath)
+
+	config, err := Load()
+	if err != nil {
+		t.Fatalf("expected config with providers to load, got %v", err)
+	}
+
+	if len(config.Providers) != 1 {
+		t.Fatalf("expected one provider, got %#v", config.Providers)
+	}
+	provider := config.Providers[0]
+	if provider.Name != "openai" {
+		t.Fatalf("expected provider name openai, got %q", provider.Name)
+	}
+	if provider.Type != "openai" {
+		t.Fatalf("expected provider type openai, got %q", provider.Type)
+	}
+	if provider.BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("expected provider base URL, got %q", provider.BaseURL)
+	}
+	if provider.AuthTokenEnvVar != "OPENAI_API_KEY" {
+		t.Fatalf("expected provider auth env var, got %q", provider.AuthTokenEnvVar)
+	}
+	if !provider.Enabled {
+		t.Fatal("expected provider to be enabled")
+	}
+	if len(provider.Models) != 2 {
+		t.Fatalf("expected two models, got %#v", provider.Models)
+	}
+	if provider.Models[0].Name != "gpt-4.1" || provider.Models[0].Enabled != nil {
+		t.Fatalf("unexpected first model: %#v", provider.Models[0])
+	}
+	if provider.Models[1].Name != "gpt-disabled" || provider.Models[1].Enabled == nil || *provider.Models[1].Enabled {
+		t.Fatalf("unexpected disabled model: %#v", provider.Models[1])
 	}
 }
 

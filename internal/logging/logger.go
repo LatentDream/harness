@@ -3,6 +3,7 @@ package logging
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -80,6 +81,13 @@ func Configure(config Config) error {
 
 	SetLogger(configuredLogger)
 	return nil
+}
+
+func ConfigureOrExit(config Config) {
+	if err := Configure(config); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to configure logging: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func (config Config) outputPath() (string, error) {
