@@ -11,6 +11,7 @@ import (
 	"latentdream/harness/internal/runtime"
 	"latentdream/harness/internal/tracing"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -24,7 +25,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	logging.ConfigureOrExit(cfg.Logging)
+	sessionID := uuid.NewString()
+	if cfg.Logging.InitialFields == nil {
+		cfg.Logging.InitialFields = map[string]any{}
+	}
+	cfg.Logging.InitialFields["sessionId"] = sessionID
+	logging.ConfigureOrExitForSession(cfg.Logging, sessionID)
+	defer func() { _ = logging.Sync() }()
 
 	ctx = tracing.Init(ctx, tracing.LogRecorder())
 

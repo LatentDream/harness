@@ -19,14 +19,17 @@ func TestLoadUsesEmbeddedDefault(t *testing.T) {
 	if config.UserConfigPath != "~/.harness.json" {
 		t.Fatalf("expected default user config path ~/.harness.json, got %q", config.UserConfigPath)
 	}
-	if config.Logging.Level != "info" {
-		t.Fatalf("expected default log level info, got %q", config.Logging.Level)
+	if config.Logging.Level != "debug" {
+		t.Fatalf("expected default log level debug, got %q", config.Logging.Level)
 	}
 	if config.Logging.Encoding != "json" {
 		t.Fatalf("expected default log encoding json, got %q", config.Logging.Encoding)
 	}
-	if config.Logging.Output != "stdout" {
-		t.Fatalf("expected default output stdout, got %q", config.Logging.Output)
+	if config.Logging.Output != "file" {
+		t.Fatalf("expected default output file, got %q", config.Logging.Output)
+	}
+	if config.Logging.FilePath != "~/.harness/logs/{sessionId}/{sessionId}.log" {
+		t.Fatalf("expected default session log file path, got %q", config.Logging.FilePath)
 	}
 	if len(config.Providers) != 1 {
 		t.Fatalf("expected one default provider, got %#v", config.Providers)

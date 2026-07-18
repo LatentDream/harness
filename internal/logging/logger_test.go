@@ -103,6 +103,51 @@ func TestConfigureAppendsToFileOutput(t *testing.T) {
 	}
 }
 
+func TestConfigureForSessionExpandsDefaultFilePath(t *testing.T) {
+	useObservedLogger(t)
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	sessionID := "session-123"
+
+	if err := ConfigureForSession(Config{
+		Level:             "debug",
+		Encoding:          "json",
+		Output:            OutputFile,
+		FilePath:          "~/.harness/logs/{sessionId}/{sessionId}.log",
+		DisableCaller:     true,
+		DisableStacktrace: true,
+	}, sessionID); err != nil {
+		t.Fatalf("configure session logger: %v", err)
+	}
+
+	Log(context.Background()).Debug("session log")
+	if err := Sync(); err != nil {
+		t.Fatalf("sync logger: %v", err)
+	}
+
+	logPath := filepath.Join(homeDir, ".harness", "logs", sessionID, sessionID+".log")
+	contents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read session log file: %v", err)
+	}
+	if !strings.Contains(string(contents), `"msg":"session log"`) {
+		t.Fatalf("expected session log entry, got %q", string(contents))
+	}
+}
+
+func TestConfigureForSessionRequiresSessionForPlaceholder(t *testing.T) {
+	useObservedLogger(t)
+
+	err := ConfigureForSession(Config{Output: OutputFile, FilePath: "logs/{sessionId}.log"}, "")
+	if err == nil {
+		t.Fatal("expected missing session ID error")
+	}
+	if !strings.Contains(err.Error(), `contains "{sessionId}"`) {
+		t.Fatalf("expected placeholder error, got %v", err)
+	}
+}
+
 func TestConfigureRejectsFileOutputWithoutPath(t *testing.T) {
 	useObservedLogger(t)
 

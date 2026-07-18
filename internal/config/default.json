@@ -4,7 +4,8 @@
     "development": true,
     "level": "debug",
     "encoding": "json",
-    "output": "stdout",
+    "output": "file",
+    "filePath": "~/.harness/logs/{sessionId}/{sessionId}.log",
     "disableCaller": false,
     "disableStacktrace": false
   },

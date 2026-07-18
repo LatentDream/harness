@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ const (
 	OutputStdout Output = "stdout"
 	OutputStderr Output = "stderr"
 	OutputFile   Output = "file"
+
+	SessionIDPlaceholder = "{sessionId}"
 )
 
 type Config struct {
@@ -45,9 +48,28 @@ var (
 )
 
 func Configure(config Config) error {
+	return ConfigureForSession(config, "")
+}
+
+func ConfigureForSession(config Config, sessionID string) error {
 	outputPath, err := config.outputPath()
 	if err != nil {
 		return err
+	}
+	if strings.Contains(outputPath, SessionIDPlaceholder) {
+		if sessionID == "" {
+			return fmt.Errorf("logging: filePath contains %q but session ID is empty", SessionIDPlaceholder)
+		}
+		outputPath = strings.ReplaceAll(outputPath, SessionIDPlaceholder, sessionID)
+	}
+	outputPath, err = expandPath(outputPath)
+	if err != nil {
+		return err
+	}
+	if outputPath != string(OutputStdout) && outputPath != string(OutputStderr) {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
+			return fmt.Errorf("create log directory: %w", err)
+		}
 	}
 
 	zapConfig := zap.NewProductionConfig()
@@ -90,6 +112,13 @@ func ConfigureOrExit(config Config) {
 	}
 }
 
+func ConfigureOrExitForSession(config Config, sessionID string) {
+	if err := ConfigureForSession(config, sessionID); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to configure logging: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func (config Config) outputPath() (string, error) {
 	output := Output(strings.ToLower(strings.TrimSpace(string(config.Output))))
 	if output == "" {
@@ -98,9 +127,6 @@ func (config Config) outputPath() (string, error) {
 
 	switch output {
 	case OutputStdout, OutputStderr:
-		if strings.TrimSpace(config.FilePath) != "" {
-			return "", fmt.Errorf("logging: filePath is only valid when output is %q", OutputFile)
-		}
 		return string(output), nil
 	case OutputFile:
 		filePath := strings.TrimSpace(config.FilePath)
@@ -111,6 +137,20 @@ func (config Config) outputPath() (string, error) {
 	default:
 		return "", fmt.Errorf("logging: unsupported output %q, expected %q, %q, or %q", config.Output, OutputStdout, OutputStderr, OutputFile)
 	}
+}
+
+func expandPath(path string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		if path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	return path, nil
 }
 
 func SetLogger(configuredLogger *zap.Logger) {
