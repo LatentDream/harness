@@ -9,3 +9,6 @@ run:
 
 dev:
     go run .
+
+test:
+    go test ./...
