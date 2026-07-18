@@ -1,0 +1,10 @@
+Find files whose paths match a glob pattern.
+
+Usage:
+- pattern is a relative glob such as "*.go", "**/*.go", or "internal/**/test_*.go".
+- Patterns without a slash match file names recursively. In path patterns, "**" matches zero or more directories.
+- path is an absolute directory path and defaults to the current working directory.
+- Results are absolute regular-file paths, sorted lexically and limited to 100 files.
+- fd is used when available and applies its normal hidden-file and ignore-file rules.
+- If fd is unavailable, find is used and dot-prefixed files and directories are skipped. The fallback cannot apply ignore-file rules.
+- Narrow path or pattern when results are truncated.

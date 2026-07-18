@@ -2,6 +2,7 @@ package tool
 
 import (
 	"latentdream/harness/internal/session/llm"
+	"latentdream/harness/internal/tool/glob"
 	"latentdream/harness/internal/tool/grep"
 	"latentdream/harness/internal/tool/model"
 	"latentdream/harness/internal/tool/read"
@@ -34,5 +35,5 @@ func ByName(tools []model.Tool) map[string]model.Tool {
 }
 
 func NewDefault() []model.Tool {
-	return []model.Tool{read.New(), write.New(), grep.New()}
+	return []model.Tool{read.New(), write.New(), glob.New(), grep.New()}
 }

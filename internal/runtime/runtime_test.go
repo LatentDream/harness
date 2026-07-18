@@ -166,7 +166,7 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "grep"}) {
+	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "glob", "grep"}) {
 		t.Fatalf("expected default tool definitions, got %#v", aiProvider.queries[0].Tools)
 	}
 
