@@ -38,5 +38,5 @@ func ByName(tools []Tool) map[string]Tool {
 }
 
 func NewDefault() []Tool {
-	return []Tool{NewReadTool()}
+	return []Tool{NewReadTool(), NewWriteTool()}
 }

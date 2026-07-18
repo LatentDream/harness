@@ -1,0 +1,10 @@
+Write a file to the local filesystem.
+
+Usage:
+- The filePath parameter must be an absolute path.
+- This tool creates the file if it does not exist and overwrites it if it does.
+- Missing parent directories are created automatically.
+- Existing files should be read first unless you intend to replace the full contents.
+- Prefer editing existing files when only a small change is needed.
+- Do not proactively create documentation files unless explicitly requested.
+- Avoid emojis unless explicitly requested.
