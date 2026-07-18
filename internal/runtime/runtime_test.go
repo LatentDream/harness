@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"latentdream/harness/internal/provider"
+	"latentdream/harness/internal/runtime/command"
 )
 
 func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
@@ -106,6 +107,23 @@ func TestRunHandlesUnknownCommandWithoutProviderCall(t *testing.T) {
 		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
 	}
 	if !reflect.DeepEqual(userInput.responses, []string{"unknown command: /unknown"}) {
+		t.Fatalf("unexpected responses: %#v", userInput.responses)
+	}
+}
+
+func TestRunWritesHelpWithoutProviderCall(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "/help"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{}
+
+	runtime := New(aiProvider, userInput)
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected runtime to handle help cleanly, got %v", err)
+	}
+
+	if len(aiProvider.queries) != 0 {
+		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
+	}
+	if !reflect.DeepEqual(userInput.responses, []string{command.DefaultRegistry().Help()}) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}
 }

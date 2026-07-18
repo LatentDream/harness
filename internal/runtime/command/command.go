@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -28,7 +29,9 @@ type Registry struct {
 }
 
 func DefaultRegistry() *Registry {
-	return NewRegistry(newExitCmd())
+	r := NewRegistry(newExitCmd())
+	r.Register(newHelpCmd(r))
+	return r
 }
 
 func NewRegistry(commands ...Command) *Registry {
@@ -82,6 +85,58 @@ func (r *Registry) IsCommand(input string) Command {
 	return r.commands[normalize(name)]
 }
 
+func (r *Registry) Help() string {
+	if r == nil || len(r.commands) == 0 {
+		return "Available commands:\n  none"
+	}
+
+	commands := make(map[string]helpEntry)
+	for _, cmd := range r.commands {
+		if cmd == nil {
+			continue
+		}
+
+		name := normalize(cmd.Name())
+		if name == "" {
+			continue
+		}
+
+		entry := helpEntry{mappings: cleanMappings(cmd.Mapping())}
+		if described, ok := cmd.(interface{ Description() string }); ok {
+			entry.description = strings.TrimSpace(described.Description())
+		}
+		commands[name] = entry
+	}
+
+	if len(commands) == 0 {
+		return "Available commands:\n  none"
+	}
+
+	names := make([]string, 0, len(commands))
+	for name := range commands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var output strings.Builder
+	output.WriteString("Available commands:")
+	for _, name := range names {
+		entry := commands[name]
+		output.WriteString("\n  ")
+		output.WriteString(strings.Join(entry.mappings, ", "))
+		if entry.description != "" {
+			output.WriteString(" - ")
+			output.WriteString(entry.description)
+		}
+	}
+	return output.String()
+}
+
+type helpEntry struct {
+	mappings    []string
+	description string
+}
+
 func parse(input string) (string, []string) {
 	parts := strings.Fields(strings.TrimSpace(input))
 	if len(parts) == 0 {
@@ -92,6 +147,17 @@ func parse(input string) (string, []string) {
 
 func normalize(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
+}
+
+func cleanMappings(mappings []string) []string {
+	cleaned := make([]string, 0, len(mappings))
+	for _, mapping := range mappings {
+		mapping = strings.TrimSpace(mapping)
+		if mapping != "" {
+			cleaned = append(cleaned, mapping)
+		}
+	}
+	return cleaned
 }
 
 func isCommandToken(name string) bool {

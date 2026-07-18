@@ -14,6 +14,10 @@ func (cmd *exit) Mapping() []string {
 	return []string{":q", "/exit", "/quit"}
 }
 
+func (cmd *exit) Description() string {
+	return "exit harness"
+}
+
 func (cmd *exit) Execute(args []string) (Result, error) {
 	return Result{Action: ActionExit}, nil
 }

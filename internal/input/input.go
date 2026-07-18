@@ -1,6 +1,6 @@
 package input
 
-type Input interface {
+type IO interface {
 	Receive() (string, error)
 	Write(string) error
 	Writef(string, ...any) error

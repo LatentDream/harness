@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 
@@ -26,11 +25,11 @@ type Runtime struct {
 	Environment environment.Environment
 	State       session.Session
 
-	input    input.Input
+	input    input.IO
 	commands *command.Registry
 }
 
-func New(aiProvider provider.Provider, userInput input.Input) *Runtime {
+func New(aiProvider provider.Provider, userInput input.IO) *Runtime {
 	return &Runtime{
 		id:       uuid.New(),
 		Provider: aiProvider,
@@ -61,7 +60,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("receive input: %w", err)
+			return r.input.WriteErrf("receive input: %w", err)
 		}
 
 		commandText := strings.TrimSpace(text)
@@ -72,11 +71,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 		commandResult, handled, err := r.commands.Execute(commandText)
 		if handled {
 			if err != nil {
-				return fmt.Errorf("execute command: %w", err)
+				return r.input.WriteErrf("execute command: %w", err)
 			}
 			if commandResult.Output != "" {
 				if writeErr := r.input.Write(commandResult.Output); writeErr != nil {
-					return fmt.Errorf("write command output: %w", writeErr)
+					return r.input.WriteErrf("write command output: %w", writeErr)
 				}
 			}
 			if commandResult.Action == command.ActionExit {
@@ -90,14 +89,14 @@ func (r *Runtime) Run(ctx context.Context) error {
 		if err != nil {
 			history = history[:len(history)-1]
 			if writeErr := r.input.Write("error: " + err.Error()); writeErr != nil {
-				return fmt.Errorf("write error response: %w", writeErr)
+				return r.input.WriteErrf("write error response: %w", writeErr)
 			}
 			continue
 		}
 
 		history = append(history, response.Message)
 		if err := r.input.Write(response.Message.Content); err != nil {
-			return fmt.Errorf("write response: %w", err)
+			return r.input.WriteErrf("write response: %w", err)
 		}
 	}
 }

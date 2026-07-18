@@ -34,7 +34,6 @@ func main() {
 
 	selection := aiProvider.Current()
 	ui.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
-	ui.Write("Type :q or /quit to quit.")
 
 	harness := runtime.New(aiProvider, ui)
 	if err := harness.Run(ctx); err != nil {
