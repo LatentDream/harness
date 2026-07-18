@@ -84,6 +84,16 @@ func TestWriteToolDefinition(t *testing.T) {
 	}
 }
 
+func TestWriteToolStatusIncludesPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.txt")
+
+	got := New().Status(writeArgs(t, path, "hello"))
+	want := "Writing file " + filepath.Clean(path)
+	if got != want {
+		t.Fatalf("expected status %q, got %q", want, got)
+	}
+}
+
 func writeArgs(t *testing.T, path string, content string) []byte {
 	t.Helper()
 

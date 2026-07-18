@@ -8,13 +8,18 @@ import (
 	"strings"
 )
 
-const defaultPrompt = "> "
+const (
+	defaultPrompt   = "> "
+	clearStatusLine = "\r\x1b[2K"
+)
 
 type Terminal struct {
 	reader    *bufio.Reader
 	writer    io.Writer
 	errWriter io.Writer
 	prompt    string
+	status    string
+	visible   bool
 }
 
 func NewTerminal(reader io.Reader, writer io.Writer, errWriter io.Writer) *Terminal {
@@ -27,6 +32,9 @@ func NewTerminal(reader io.Reader, writer io.Writer, errWriter io.Writer) *Termi
 }
 
 func (t *Terminal) Receive() (string, error) {
+	if err := t.hideStatus(); err != nil {
+		return "", err
+	}
 	if _, err := fmt.Fprint(t.writer, t.prompt); err != nil {
 		return "", err
 	}
@@ -43,9 +51,23 @@ func (t *Terminal) Receive() (string, error) {
 	return trimLineEnding(line), nil
 }
 
+func (t *Terminal) SetStatus(status string) error {
+	t.status = status
+	return t.redrawStatus()
+}
+
+func (t *Terminal) SetStatusf(format string, args ...any) error {
+	return t.SetStatus(fmt.Sprintf(format, args...))
+}
+
 func (t *Terminal) Write(response string) error {
-	_, err := fmt.Fprintln(t.writer, response)
-	return err
+	if err := t.hideStatus(); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(t.writer, response); err != nil {
+		return err
+	}
+	return t.showStatus()
 }
 
 func (t *Terminal) Writef(format string, args ...any) error {
@@ -53,12 +75,46 @@ func (t *Terminal) Writef(format string, args ...any) error {
 }
 
 func (t *Terminal) WriteErr(response string) error {
-	_, err := fmt.Fprintln(t.errWriter, response)
-	return err
+	if err := t.hideStatus(); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(t.errWriter, response); err != nil {
+		return err
+	}
+	return t.showStatus()
 }
 
 func (t *Terminal) WriteErrf(format string, args ...any) error {
 	return t.WriteErr(fmt.Sprintf(format, args...))
+}
+
+func (t *Terminal) redrawStatus() error {
+	if err := t.hideStatus(); err != nil {
+		return err
+	}
+	return t.showStatus()
+}
+
+func (t *Terminal) hideStatus() error {
+	if !t.visible {
+		return nil
+	}
+	if _, err := fmt.Fprint(t.writer, clearStatusLine); err != nil {
+		return err
+	}
+	t.visible = false
+	return nil
+}
+
+func (t *Terminal) showStatus() error {
+	if t.status == "" {
+		return nil
+	}
+	if _, err := fmt.Fprint(t.writer, clearStatusLine, t.status); err != nil {
+		return err
+	}
+	t.visible = true
+	return nil
 }
 
 func trimLineEnding(line string) string {

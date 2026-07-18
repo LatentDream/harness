@@ -13,8 +13,10 @@ import (
 	"latentdream/harness/internal/orchestrator"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
+	"latentdream/harness/internal/runtime/execution"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/tool"
+	"latentdream/harness/internal/tool/model"
 
 	"github.com/google/uuid"
 )
@@ -25,7 +27,7 @@ type Runtime struct {
 	id uuid.UUID
 
 	Provider    provider.Provider
-	Tools       []tool.Tool
+	Tools       []model.Tool
 	Controller  orchestrator.Orchestrator
 	Environment environment.Environment
 	State       session.Session
@@ -66,6 +68,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 		default:
 		}
 
+		// User Input ~~~~~~~~~~~~~~~~~~~~
 		text, err := r.input.Receive()
 		if errors.Is(err, io.EOF) {
 			return nil
@@ -73,12 +76,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 		if err != nil {
 			return r.input.WriteErrf("receive input: %w", err)
 		}
-
 		commandText := strings.TrimSpace(text)
 		if commandText == "" {
 			continue
 		}
 
+		// Command (:q, :help, ...) ~~~~~~
 		commandResult, handled, err := r.commands.Execute(commandText)
 		if handled {
 			if err != nil {
@@ -95,11 +98,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 			continue
 		}
 
+		// Build context ~~~~~~~~~~~~~~~~~~
 		rollbackIndex := len(history)
 		history = append(history, llm.Message{Role: llm.RoleUser, Content: text})
 
+		// inference + tool execution ~~~~~
 		var response string
-		history, response, err = r.complete(ctx, history)
+		history, response, err = r.inference(ctx, history)
 		if err != nil {
 			history = history[:rollbackIndex]
 			if writeErr := r.input.Write("error: " + err.Error()); writeErr != nil {
@@ -114,12 +119,17 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runtime) complete(ctx context.Context, history []llm.Message) ([]llm.Message, string, error) {
+func (r *Runtime) inference(ctx context.Context, history []llm.Message) ([]llm.Message, string, error) {
 	definitions := tool.Definitions(r.Tools)
 	toolsByName := tool.ByName(r.Tools)
 
 	for round := 0; round < maxToolRounds; round++ {
-		response, err := r.Provider.Send(ctx, llm.Request{Messages: history, Tools: definitions})
+		var response provider.Response
+		err := execution.WithStatus(r.input, "inference", func() error {
+			var sendErr error
+			response, sendErr = r.Provider.Send(ctx, llm.Request{Messages: history, Tools: definitions})
+			return sendErr
+		})
 		if err != nil {
 			return history, "", err
 		}
@@ -138,28 +148,15 @@ func (r *Runtime) complete(ctx context.Context, history []llm.Message) ([]llm.Me
 		history = append(history, message)
 
 		for _, call := range message.ToolCalls {
-			history = append(history, executeToolCall(ctx, toolsByName, call))
+			toolMessage, err := execution.ToolCall(ctx, r.input, toolsByName, call)
+			if err != nil {
+				return history, "", err
+			}
+			history = append(history, toolMessage)
 		}
 	}
 
 	return history, "", errors.New("tool call limit exceeded")
-}
-
-func executeToolCall(ctx context.Context, toolsByName map[string]tool.Tool, call llm.ToolCall) llm.Message {
-	result := ""
-	item := toolsByName[call.Name]
-	if item == nil {
-		result = fmt.Sprintf("error: tool %q is not available", call.Name)
-	} else {
-		output, err := item.Execute(ctx, call.Arguments)
-		if err != nil {
-			result = "error: " + err.Error()
-		} else {
-			result = output
-		}
-	}
-
-	return llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: result}
 }
 
 func (r *Runtime) validateInput(ctx context.Context) error {

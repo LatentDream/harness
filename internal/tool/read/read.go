@@ -60,6 +60,14 @@ func (readTool) Definition() llm.ToolDefinition {
 	}
 }
 
+func (readTool) Status(args json.RawMessage) string {
+	params, err := decodeReadParams(args)
+	if err != nil {
+		return "Reading file"
+	}
+	return "Reading file " + params.filePath
+}
+
 func (readTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	params, err := decodeReadParams(args)
 	if err != nil {

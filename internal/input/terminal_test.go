@@ -85,3 +85,57 @@ func TestTerminalWriteErrfWritesFormattedErrorLine(t *testing.T) {
 		t.Fatalf("expected formatted stderr line, got %q", errOutput.String())
 	}
 }
+
+func TestTerminalSetStatusDisplaysAndClearsStatus(t *testing.T) {
+	var output bytes.Buffer
+	var errOutput bytes.Buffer
+	terminal := NewTerminal(strings.NewReader(""), &output, &errOutput)
+
+	if err := terminal.SetStatusf("reading %s", "sample.txt"); err != nil {
+		t.Fatalf("expected status to write, got %v", err)
+	}
+	if err := terminal.SetStatus(""); err != nil {
+		t.Fatalf("expected status to clear, got %v", err)
+	}
+
+	want := clearStatusLine + "reading sample.txt" + clearStatusLine
+	if output.String() != want {
+		t.Fatalf("expected status display and clear, got %q", output.String())
+	}
+}
+
+func TestTerminalWriteKeepsStatusBelowText(t *testing.T) {
+	var output bytes.Buffer
+	var errOutput bytes.Buffer
+	terminal := NewTerminal(strings.NewReader(""), &output, &errOutput)
+
+	if err := terminal.SetStatus("inference"); err != nil {
+		t.Fatalf("expected status to write, got %v", err)
+	}
+	if err := terminal.Write("assistant response"); err != nil {
+		t.Fatalf("expected response to write, got %v", err)
+	}
+
+	want := clearStatusLine + "inference" + clearStatusLine + "assistant response\n" + clearStatusLine + "inference"
+	if output.String() != want {
+		t.Fatalf("expected status below text, got %q", output.String())
+	}
+}
+
+func TestTerminalReceiveClearsStatusBeforePrompt(t *testing.T) {
+	var output bytes.Buffer
+	var errOutput bytes.Buffer
+	terminal := NewTerminal(strings.NewReader("hello\n"), &output, &errOutput)
+
+	if err := terminal.SetStatus("inference"); err != nil {
+		t.Fatalf("expected status to write, got %v", err)
+	}
+	if _, err := terminal.Receive(); err != nil {
+		t.Fatalf("expected receive to succeed, got %v", err)
+	}
+
+	want := clearStatusLine + "inference" + clearStatusLine + "> "
+	if output.String() != want {
+		t.Fatalf("expected status to clear before prompt, got %q", output.String())
+	}
+}

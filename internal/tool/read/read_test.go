@@ -54,6 +54,16 @@ func TestReadToolRejectsRelativePath(t *testing.T) {
 	}
 }
 
+func TestReadToolStatusIncludesPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.txt")
+
+	got := New().Status([]byte(fmt.Sprintf(`{"filePath":%q}`, path)))
+	want := "Reading file " + filepath.Clean(path)
+	if got != want {
+		t.Fatalf("expected status %q, got %q", want, got)
+	}
+}
+
 func assertContains(t *testing.T, haystack string, needle string) {
 	t.Helper()
 	if !strings.Contains(haystack, needle) {

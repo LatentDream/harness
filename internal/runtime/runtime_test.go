@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,7 +29,10 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 	if len(aiProvider.queries) != 1 {
 		t.Fatalf("expected one query, got %d", len(aiProvider.queries))
 	}
-	expectedMessages := []llm.Message{{Role: "user", Content: "  hello  "}}
+	expectedMessages := []llm.Message{
+		{Role: llm.RoleSystem, Content: runtime.State.BuildSystemPrompt()},
+		{Role: "user", Content: "  hello  "},
+	}
 	if !reflect.DeepEqual(aiProvider.queries[0].Messages, expectedMessages) {
 		t.Fatalf("expected messages %#v, got %#v", expectedMessages, aiProvider.queries[0].Messages)
 	}
@@ -53,6 +57,7 @@ func TestRunKeepsConversationHistory(t *testing.T) {
 		t.Fatalf("expected two queries, got %d", len(aiProvider.queries))
 	}
 	expectedSecondQuery := []llm.Message{
+		{Role: llm.RoleSystem, Content: runtime.State.BuildSystemPrompt()},
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "first"},
 		{Role: "user", Content: "again"},
@@ -90,6 +95,10 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if !reflect.DeepEqual(userInput.responses, []string{"read complete"}) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}
+	expectedStatuses := []string{"inference", "", "Reading file " + path, "", "inference", ""}
+	if !reflect.DeepEqual(userInput.statuses, expectedStatuses) {
+		t.Fatalf("expected statuses %#v, got %#v", expectedStatuses, userInput.statuses)
+	}
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
@@ -98,10 +107,10 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	}
 
 	secondMessages := aiProvider.queries[1].Messages
-	if len(secondMessages) != 3 {
+	if len(secondMessages) != 4 {
 		t.Fatalf("expected user, assistant tool call, and tool result, got %#v", secondMessages)
 	}
-	toolResult := secondMessages[2]
+	toolResult := secondMessages[3]
 	if toolResult.Role != "tool" || toolResult.ToolCallID != "call_1" || !strings.Contains(toolResult.Content, "1: hello") {
 		t.Fatalf("unexpected tool result message: %#v", toolResult)
 	}
@@ -138,7 +147,10 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	expectedSecondQuery := []llm.Message{{Role: "user", Content: "hello"}}
+	expectedSecondQuery := []llm.Message{
+		{Role: llm.RoleSystem, Content: runtime.State.BuildSystemPrompt()},
+		{Role: "user", Content: "hello"},
+	}
 	if !reflect.DeepEqual(aiProvider.queries[1].Messages, expectedSecondQuery) {
 		t.Fatalf("expected failed message to be removed from history, got %#v", aiProvider.queries[1].Messages)
 	}
@@ -186,6 +198,7 @@ type receiveResult struct {
 type scriptedInput struct {
 	receives  []receiveResult
 	responses []string
+	statuses  []string
 }
 
 func (s *scriptedInput) Receive() (string, error) {
@@ -201,6 +214,15 @@ func (s *scriptedInput) Receive() (string, error) {
 func (s *scriptedInput) Write(response string) error {
 	s.responses = append(s.responses, response)
 	return nil
+}
+
+func (s *scriptedInput) SetStatus(status string) error {
+	s.statuses = append(s.statuses, status)
+	return nil
+}
+
+func (s *scriptedInput) SetStatusf(format string, args ...any) error {
+	return s.SetStatus(fmt.Sprintf(format, args...))
 }
 
 func (s *scriptedInput) Writef(format string, args ...any) error {

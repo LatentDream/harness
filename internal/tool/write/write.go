@@ -53,6 +53,14 @@ func (writeTool) Definition() llm.ToolDefinition {
 	}
 }
 
+func (writeTool) Status(args json.RawMessage) string {
+	params, err := decodeWriteParams(args)
+	if err != nil {
+		return "Writing file"
+	}
+	return "Writing file " + params.filePath
+}
+
 func (writeTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	params, err := decodeWriteParams(args)
 	if err != nil {
