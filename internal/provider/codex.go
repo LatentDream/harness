@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -61,6 +62,7 @@ type codexResponsesRequest struct {
 	Model           string              `json:"model"`
 	Input           []codexInputMessage `json:"input"`
 	Store           bool                `json:"store"`
+	Stream          bool                `json:"stream"`
 	Instructions    string              `json:"instructions,omitempty"`
 	MaxOutputTokens int                 `json:"max_output_tokens,omitempty"`
 }
@@ -117,6 +119,7 @@ func codexRequest(model string, query Query) codexResponsesRequest {
 		Model:           model,
 		Input:           make([]codexInputMessage, 0, len(query.Messages)),
 		Store:           false,
+		Stream:          true,
 		MaxOutputTokens: query.MaxTokens,
 	}
 	instructions := make([]string, 0)
@@ -354,6 +357,15 @@ func parseCodexClaims(token string) (codexClaims, bool) {
 }
 
 func codexResponseContent(body []byte) (string, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if strings.HasPrefix(trimmed, "event:") || strings.HasPrefix(trimmed, "data:") || strings.Contains(trimmed, "\ndata:") {
+		return codexStreamResponseContent(body)
+	}
+
+	return codexJSONResponseContent(body)
+}
+
+func codexJSONResponseContent(body []byte) (string, error) {
 	var decoded codexResponsesResponse
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		return "", err
@@ -386,6 +398,90 @@ func codexResponseContent(body []byte) (string, error) {
 	}
 
 	return strings.Join(parts, "\n"), nil
+}
+
+func codexStreamResponseContent(body []byte) (string, error) {
+	var deltas strings.Builder
+	finalText := ""
+	dataLines := make([]string, 0)
+	scanner := bufio.NewScanner(strings.NewReader(string(body)))
+
+	process := func() error {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		payload := strings.TrimSpace(strings.Join(dataLines, "\n"))
+		dataLines = dataLines[:0]
+		if payload == "" || payload == "[DONE]" {
+			return nil
+		}
+
+		var event struct {
+			Type       string          `json:"type"`
+			Delta      string          `json:"delta"`
+			Text       string          `json:"text"`
+			OutputText string          `json:"output_text"`
+			Response   json.RawMessage `json:"response"`
+			Error      *struct {
+				Message string `json:"message"`
+				Code    string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			return fmt.Errorf("decode codex stream event: %w", err)
+		}
+		if event.Error != nil {
+			if event.Error.Code != "" {
+				return fmt.Errorf("codex stream error %s: %s", event.Error.Code, event.Error.Message)
+			}
+			return fmt.Errorf("codex stream error: %s", event.Error.Message)
+		}
+		if event.Delta != "" {
+			deltas.WriteString(event.Delta)
+		}
+		if event.OutputText != "" {
+			finalText = event.OutputText
+		}
+		if event.Text != "" && strings.Contains(event.Type, "output_text") {
+			finalText = event.Text
+		}
+		if len(event.Response) > 0 {
+			content, err := codexJSONResponseContent(event.Response)
+			if err == nil {
+				finalText = content
+			}
+		}
+
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if line == "" {
+			if err := process(); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if data, ok := strings.CutPrefix(line, "data:"); ok {
+			dataLines = append(dataLines, strings.TrimSpace(data))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read codex stream: %w", err)
+	}
+	if err := process(); err != nil {
+		return "", err
+	}
+
+	if deltas.Len() > 0 {
+		return deltas.String(), nil
+	}
+	if finalText != "" {
+		return finalText, nil
+	}
+
+	return "", errors.New("codex stream contained no text output")
 }
 
 func expandHome(path string) (string, error) {

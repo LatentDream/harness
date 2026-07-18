@@ -29,7 +29,7 @@ func TestNewCodexDefaultsModelAndAuth(t *testing.T) {
 	}
 }
 
-func TestCodexRequestIncludesStoreFalse(t *testing.T) {
+func TestCodexRequestIncludesRequiredResponseFlags(t *testing.T) {
 	payload := codexRequest(defaultCodexModel, Query{Messages: []Message{{Role: "user", Content: "hello"}}})
 	contents, err := json.Marshal(payload)
 	if err != nil {
@@ -46,6 +46,35 @@ func TestCodexRequestIncludesStoreFalse(t *testing.T) {
 	}
 	if store != false {
 		t.Fatalf("expected store false, got %#v", store)
+	}
+	stream, ok := raw["stream"]
+	if !ok {
+		t.Fatal("expected codex request to include stream")
+	}
+	if stream != true {
+		t.Fatalf("expected stream true, got %#v", stream)
+	}
+}
+
+func TestCodexResponseContentReadsStream(t *testing.T) {
+	body := strings.Join([]string{
+		`event: response.output_text.delta`,
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		``,
+		`event: response.output_text.delta`,
+		`data: {"type":"response.output_text.delta","delta":" world"}`,
+		``,
+		`event: response.completed`,
+		`data: {"type":"response.completed","response":{"output_text":"hello world"}}`,
+		``,
+	}, "\n")
+
+	content, err := codexResponseContent([]byte(body))
+	if err != nil {
+		t.Fatalf("expected stream response to decode, got %v", err)
+	}
+	if content != "hello world" {
+		t.Fatalf("expected stream content hello world, got %q", content)
 	}
 }
 
@@ -90,6 +119,12 @@ func TestSendCodexUsesOpencodeAuthFile(t *testing.T) {
 		if request.MaxOutputTokens != 128 {
 			t.Fatalf("expected max output tokens 128, got %d", request.MaxOutputTokens)
 		}
+		if request.Store {
+			t.Fatal("expected store false")
+		}
+		if !request.Stream {
+			t.Fatal("expected stream true")
+		}
 		if len(request.Input) != 2 {
 			t.Fatalf("expected two input messages, got %#v", request.Input)
 		}
@@ -100,20 +135,11 @@ func TestSendCodexUsesOpencodeAuthFile(t *testing.T) {
 			t.Fatalf("unexpected assistant message: %#v", request.Input[1])
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"output": []map[string]any{
-				{
-					"type": "message",
-					"role": "assistant",
-					"content": []map[string]string{
-						{"type": "output_text", "text": "codex response"},
-					},
-				},
-			},
-		}); err != nil {
-			t.Fatalf("encode response: %v", err)
-		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"codex\"}\n\n"))
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\" response\"}\n\n"))
 	}))
 	defer server.Close()
 
