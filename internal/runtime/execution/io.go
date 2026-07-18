@@ -11,6 +11,7 @@ func UserInput(ctx context.Context, turnID string, text string) {
 	tracing.UserInput(ctx, turnID, text)
 }
 
+// TODO: I don't like this, we should call input/ui/io directly, but we need tracing on it. TBD
 func Write(ctx context.Context, io input.IO, stream string, text string) error {
 	var err error
 	if stream == "stderr" {

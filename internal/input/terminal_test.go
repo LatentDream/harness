@@ -2,10 +2,12 @@ package input
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTerminalReceiveReadsLineAndWritesPrompt(t *testing.T) {
@@ -13,7 +15,7 @@ func TestTerminalReceiveReadsLineAndWritesPrompt(t *testing.T) {
 	var errOutput bytes.Buffer
 	terminal := NewTerminal(strings.NewReader("hello\n"), &output, &errOutput)
 
-	text, err := terminal.Receive()
+	text, err := terminal.Receive(context.Background())
 	if err != nil {
 		t.Fatalf("expected receive to succeed, got %v", err)
 	}
@@ -30,7 +32,7 @@ func TestTerminalReceiveReturnsPartialLineBeforeEOF(t *testing.T) {
 	var errOutput bytes.Buffer
 	terminal := NewTerminal(strings.NewReader("hello"), &output, &errOutput)
 
-	text, err := terminal.Receive()
+	text, err := terminal.Receive(context.Background())
 	if err != nil {
 		t.Fatalf("expected partial line before EOF, got %v", err)
 	}
@@ -38,9 +40,32 @@ func TestTerminalReceiveReturnsPartialLineBeforeEOF(t *testing.T) {
 		t.Fatalf("expected hello, got %q", text)
 	}
 
-	_, err = terminal.Receive()
+	_, err = terminal.Receive(context.Background())
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("expected EOF after partial line, got %v", err)
+	}
+}
+
+func TestTerminalReceiveReturnsWhenContextIsCanceled(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	terminal := NewTerminal(reader, io.Discard, io.Discard)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := terminal.Receive(ctx)
+		result <- err
+	}()
+	cancel()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context cancellation, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("receive did not return after cancellation")
 	}
 }
 
@@ -130,7 +155,7 @@ func TestTerminalReceiveClearsStatusBeforePrompt(t *testing.T) {
 	if err := terminal.SetStatus("inference"); err != nil {
 		t.Fatalf("expected status to write, got %v", err)
 	}
-	if _, err := terminal.Receive(); err != nil {
+	if _, err := terminal.Receive(context.Background()); err != nil {
 		t.Fatalf("expected receive to succeed, got %v", err)
 	}
 

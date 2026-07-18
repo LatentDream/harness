@@ -2,6 +2,7 @@ package input
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,24 +15,30 @@ const (
 )
 
 type Terminal struct {
-	reader    *bufio.Reader
-	writer    io.Writer
-	errWriter io.Writer
-	prompt    string
-	status    string
-	visible   bool
+	reader       *bufio.Reader
+	readerCloser io.Closer
+	writer       io.Writer
+	errWriter    io.Writer
+	prompt       string
+	status       string
+	visible      bool
 }
 
 func NewTerminal(reader io.Reader, writer io.Writer, errWriter io.Writer) *Terminal {
-	return &Terminal{
+	terminal := &Terminal{
 		reader:    bufio.NewReader(reader),
 		writer:    writer,
 		errWriter: errWriter,
 		prompt:    defaultPrompt,
 	}
+	terminal.readerCloser, _ = reader.(io.Closer)
+	return terminal
 }
 
-func (t *Terminal) Receive() (string, error) {
+func (t *Terminal) Receive(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := t.hideStatus(); err != nil {
 		return "", err
 	}
@@ -39,7 +46,17 @@ func (t *Terminal) Receive() (string, error) {
 		return "", err
 	}
 
+	stopCancellation := func() bool { return true }
+	if t.readerCloser != nil {
+		stopCancellation = context.AfterFunc(ctx, func() {
+			_ = t.readerCloser.Close()
+		})
+	}
 	line, err := t.reader.ReadString('\n')
+	stopCancellation()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
+	}
 	if err != nil {
 		if errors.Is(err, io.EOF) && line != "" {
 			return trimLineEnding(line), nil

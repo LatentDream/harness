@@ -79,7 +79,11 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) error {
 		default:
 		}
 
-		text, err := r.input.Receive()
+		text, err := r.input.Receive(ctx)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			trace.SetReason(tracing.EndReasonCancelled)
+			return err
+		}
 		if errors.Is(err, io.EOF) {
 			trace.SetReason(tracing.EndReasonEOF)
 			return nil
@@ -156,9 +160,15 @@ func (r *Runtime) handleTurn(ctx context.Context, text string) error {
 		r.Session.Conversation = r.Session.Conversation[:rollbackIndex]
 
 		turn.Rollback(rollbackIndex, r.sessionState())
-		writeErr := execution.Write(ctx, r.input, "stdout", "error: "+inferenceErr.Error())
+		var writeErr error
+		if !errors.Is(inferenceErr, context.Canceled) && !errors.Is(inferenceErr, context.DeadlineExceeded) {
+			writeErr = execution.Write(ctx, r.input, "stdout", "error: "+inferenceErr.Error())
+		}
 		turn.End(inferenceErr, "", r.sessionState())
 		traceErr := turn.Checkpoint()
+		if errors.Is(inferenceErr, context.Canceled) || errors.Is(inferenceErr, context.DeadlineExceeded) {
+			return errors.Join(inferenceErr, traceErr)
+		}
 		if tracing.IsRecordingError(inferenceErr) || writeErr != nil || traceErr != nil {
 			return errors.Join(inferenceErr, writeErr, traceErr)
 		}

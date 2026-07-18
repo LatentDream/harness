@@ -166,8 +166,8 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write"}) {
-		t.Fatalf("expected read and write tool definitions, got %#v", aiProvider.queries[0].Tools)
+	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "grep"}) {
+		t.Fatalf("expected default tool definitions, got %#v", aiProvider.queries[0].Tools)
 	}
 
 	secondMessages := aiProvider.queries[1].Messages
@@ -228,6 +228,24 @@ func TestRunReturnsNilOnEOF(t *testing.T) {
 	}
 	if len(aiProvider.queries) != 0 {
 		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
+	}
+}
+
+func TestRunReturnsCancellationWithoutWritingAnError(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "hello"}}}
+	aiProvider := &fakeProvider{errors: []error{context.Canceled}}
+	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
+
+	runtime := New(aiProvider, userInput)
+	err := runtime.Run(tracing.Init(context.Background(), recorder))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+	if len(userInput.responses) != 0 {
+		t.Fatalf("expected no cancellation error output, got %#v", userInput.responses)
+	}
+	if recorder.run.outcome.Status != tracing.StatusCancelled || recorder.run.outcome.Reason != tracing.EndReasonCancelled {
+		t.Fatalf("unexpected run outcome: %#v", recorder.run.outcome)
 	}
 }
 
@@ -313,7 +331,7 @@ type scriptedInput struct {
 	statuses  []string
 }
 
-func (s *scriptedInput) Receive() (string, error) {
+func (s *scriptedInput) Receive(context.Context) (string, error) {
 	if len(s.receives) == 0 {
 		return "", io.EOF
 	}

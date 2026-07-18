@@ -1,7 +1,9 @@
 package input
 
+import "context"
+
 type IO interface {
-	Receive() (string, error)
+	Receive(context.Context) (string, error)
 	SetStatus(string) error
 	SetStatusf(string, ...any) error
 	Write(string) error

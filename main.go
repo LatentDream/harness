@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"latentdream/harness/internal/config"
 	"latentdream/harness/internal/input"
@@ -16,7 +19,9 @@ import (
 )
 
 func main() {
-	ctx := context.Background() // TODO: proper ctx
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	ui := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
 
 	cfg, err := config.Load()
@@ -46,6 +51,9 @@ func main() {
 
 	harness := runtime.New(aiProvider, ui)
 	if err := harness.Run(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		ui.WriteErrf("runtime failed: %v", err)
 		logging.Log(ctx).Fatal("runtime failure", zap.Error(err))
 	}
