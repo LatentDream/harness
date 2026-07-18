@@ -1,0 +1,9 @@
+Search file contents with ripgrep.
+
+Usage:
+- pattern is a ripgrep regular expression.
+- path may be an absolute file or directory path and defaults to the current working directory.
+- include optionally filters files with a glob such as "*.go" or "internal/**/*.go".
+- Results use the format "<path>:<line>:<content>" and are limited to 100 matching lines.
+- Ripgrep's normal ignore rules apply: hidden files, binary files, and files excluded by ignore files are skipped.
+- Narrow pattern, path, or include when results are truncated.
