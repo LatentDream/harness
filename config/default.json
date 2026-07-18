@@ -1,4 +1,5 @@
 {
+  "userConfigPath": "~/.harness.json",
   "logging": {
     "development": false,
     "level": "info",
