@@ -18,6 +18,8 @@ type Provider struct {
 	Type            string          `json:"type"`
 	BaseURL         string          `json:"base_url"`
 	AuthTokenEnvVar string          `json:"auth_token_env_var"`
+	AuthFile        string          `json:"auth_file"`
+	AuthProvider    string          `json:"auth_provider"`
 	Models          []ProviderModel `json:"models"`
 	Enabled         bool            `json:"enabled"`
 }

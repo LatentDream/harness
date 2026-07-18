@@ -8,5 +8,15 @@
     "disableCaller": false,
     "disableStacktrace": false
   },
-  "providers": []
+  "providers": [
+    {
+      "name": "codex",
+      "type": "codex",
+      "auth_file": "~/.local/share/opencode/auth.json",
+      "auth_provider": "openai",
+      "models": [{ "name": "gpt-5.5" }],
+      "enabled": true
+    }
+
+  ]
 }

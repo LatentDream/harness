@@ -17,10 +17,14 @@ import (
 )
 
 const (
-	defaultOpenAIBaseURL    = "https://api.openai.com/v1"
-	defaultAnthropicBaseURL = "https://api.anthropic.com"
-	defaultAnthropicVersion = "2023-06-01"
-	defaultMaxTokens        = 1024
+	defaultOpenAIBaseURL     = "https://api.openai.com/v1"
+	defaultAnthropicBaseURL  = "https://api.anthropic.com"
+	defaultCodexBaseURL      = "https://chatgpt.com/backend-api/codex"
+	defaultCodexAuthFile     = "~/.local/share/opencode/auth.json"
+	defaultCodexAuthProvider = "openai"
+	defaultCodexModel        = "gpt-5.3-codex"
+	defaultAnthropicVersion  = "2023-06-01"
+	defaultMaxTokens         = 1024
 )
 
 var ErrNoEnabledProviders = errors.New("provider: no enabled providers configured")
@@ -93,6 +97,7 @@ type providerKind string
 const (
 	providerKindOpenAICompatible providerKind = "openai-compatible"
 	providerKindAnthropic        providerKind = "anthropic"
+	providerKindCodex            providerKind = "codex"
 )
 
 type configuredProvider struct {
@@ -100,6 +105,8 @@ type configuredProvider struct {
 	kind            providerKind
 	baseURL         string
 	authTokenEnvVar string
+	authFile        string
+	authProvider    string
 	models          []string
 }
 
@@ -174,6 +181,8 @@ func (m *manager) Send(ctx context.Context, query Query) (Response, error) {
 		return m.sendOpenAICompatible(ctx, configured, model, query)
 	case providerKindAnthropic:
 		return m.sendAnthropic(ctx, configured, model, query)
+	case providerKindCodex:
+		return m.sendCodex(ctx, configured, model, query)
 	default:
 		return Response{}, fmt.Errorf("provider %q has unsupported type %q", configured.name, configured.kind)
 	}
@@ -203,7 +212,7 @@ func newConfiguredProvider(index int, providerCfg config.Provider) (configuredPr
 		name = defaultProviderName(index, kind, providerCfg.Type, providerCfg.AuthTokenEnvVar)
 	}
 
-	models, err := enabledModels(name, providerCfg.Models)
+	models, err := enabledModels(name, kind, providerCfg.Models)
 	if err != nil {
 		return configuredProvider{}, err
 	}
@@ -213,11 +222,24 @@ func newConfiguredProvider(index int, providerCfg config.Provider) (configuredPr
 		return configuredProvider{}, err
 	}
 
+	authFile := strings.TrimSpace(providerCfg.AuthFile)
+	authProvider := strings.TrimSpace(providerCfg.AuthProvider)
+	if kind == providerKindCodex {
+		if authFile == "" {
+			authFile = defaultCodexAuthFile
+		}
+		if authProvider == "" {
+			authProvider = defaultCodexAuthProvider
+		}
+	}
+
 	return configuredProvider{
 		name:            name,
 		kind:            kind,
 		baseURL:         baseURL,
 		authTokenEnvVar: strings.TrimSpace(providerCfg.AuthTokenEnvVar),
+		authFile:        authFile,
+		authProvider:    authProvider,
 		models:          models,
 	}, nil
 }
@@ -232,6 +254,8 @@ func providerType(providerType string, authTokenEnvVar string, name string) (pro
 		return providerKindOpenAICompatible, nil
 	case "anthropic", "claude":
 		return providerKindAnthropic, nil
+	case "codex", "chatgpt", "chatgpt-codex":
+		return providerKindCodex, nil
 	default:
 		return "", fmt.Errorf("provider type %q is not supported", providerType)
 	}
@@ -247,6 +271,9 @@ func defaultProviderName(index int, kind providerKind, providerType string, auth
 	}
 	if kind == providerKindAnthropic {
 		return "anthropic"
+	}
+	if kind == providerKindCodex {
+		return "codex"
 	}
 
 	return fmt.Sprintf("provider-%d", index+1)
@@ -271,6 +298,8 @@ func providerBaseURL(name string, kind providerKind, providerType string, baseUR
 			baseURL = defaultOpenAIBaseURL
 		case providerKindAnthropic:
 			baseURL = defaultAnthropicBaseURL
+		case providerKindCodex:
+			baseURL = defaultCodexBaseURL
 		default:
 			return "", fmt.Errorf("provider %q has unsupported type %q", name, kind)
 		}
@@ -284,7 +313,11 @@ func providerBaseURL(name string, kind providerKind, providerType string, baseUR
 	return strings.TrimRight(baseURL, "/"), nil
 }
 
-func enabledModels(providerName string, models []config.ProviderModel) ([]string, error) {
+func enabledModels(providerName string, kind providerKind, models []config.ProviderModel) ([]string, error) {
+	if len(models) == 0 && kind == providerKindCodex {
+		return []string{defaultCodexModel}, nil
+	}
+
 	modelNames := make([]string, 0, len(models))
 	seen := map[string]struct{}{}
 	for index, model := range models {

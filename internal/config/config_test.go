@@ -28,8 +28,14 @@ func TestLoadUsesEmbeddedDefault(t *testing.T) {
 	if config.Logging.Output != "stdout" {
 		t.Fatalf("expected default output stdout, got %q", config.Logging.Output)
 	}
-	if len(config.Providers) != 0 {
-		t.Fatalf("expected no default providers, got %#v", config.Providers)
+	if len(config.Providers) != 1 {
+		t.Fatalf("expected one default provider, got %#v", config.Providers)
+	}
+	if config.Providers[0].Name != "codex" {
+		t.Fatalf("expected default provider codex, got %q", config.Providers[0].Name)
+	}
+	if len(config.Providers[0].Models) != 1 || config.Providers[0].Models[0].Name != "gpt-5.5" {
+		t.Fatalf("expected default codex model gpt-5.5, got %#v", config.Providers[0].Models)
 	}
 }
 
@@ -68,6 +74,8 @@ func TestLoadReadsProviders(t *testing.T) {
 				"type": "openai",
 				"base_url": "https://api.openai.com/v1",
 				"auth_token_env_var": "OPENAI_API_KEY",
+				"auth_file": "~/.local/share/opencode/auth.json",
+				"auth_provider": "openai",
 				"enabled": true,
 				"models": [
 					{"name": "gpt-4.1"},
@@ -98,6 +106,12 @@ func TestLoadReadsProviders(t *testing.T) {
 	}
 	if provider.AuthTokenEnvVar != "OPENAI_API_KEY" {
 		t.Fatalf("expected provider auth env var, got %q", provider.AuthTokenEnvVar)
+	}
+	if provider.AuthFile != "~/.local/share/opencode/auth.json" {
+		t.Fatalf("expected provider auth file, got %q", provider.AuthFile)
+	}
+	if provider.AuthProvider != "openai" {
+		t.Fatalf("expected provider auth provider, got %q", provider.AuthProvider)
 	}
 	if !provider.Enabled {
 		t.Fatal("expected provider to be enabled")
