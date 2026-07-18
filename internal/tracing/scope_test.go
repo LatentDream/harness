@@ -15,13 +15,35 @@ func TestCheckpointReturnsAndClearsRecordingErrors(t *testing.T) {
 		t.Fatalf("start run: %v", err)
 	}
 
-	_ = Record(ctx, Event{Kind: KindUserInput})
+	Record(ctx, Event{Kind: KindUserInput})
 	err = Checkpoint(ctx)
 	if !IsRecordingError(err) || !errors.Is(err, want) {
 		t.Fatalf("expected recording error %v, got %v", want, err)
 	}
 	if err := Checkpoint(ctx); err != nil {
 		t.Fatalf("expected checkpoint to clear the error, got %v", err)
+	}
+}
+
+func TestHighLevelOperationsRetainRecorderErrors(t *testing.T) {
+	snapshotErr := errors.New("snapshot failed")
+	spanErr := errors.New("span failed")
+	run := &scopeTestRun{snapshotErr: snapshotErr, spanEndErr: spanErr}
+	ctx := Init(context.Background(), scopeTestRecorder{run: run})
+	ctx, err := StartRun(ctx, RunMeta{})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	ctx, err = StartSpan(ctx, SpanStart{Kind: SpanToolCall})
+	if err != nil {
+		t.Fatalf("start span: %v", err)
+	}
+
+	Snapshot(ctx, SessionState{})
+	EndSpan(ctx, SpanEnd{Status: StatusSuccess})
+	err = Checkpoint(ctx)
+	if !errors.Is(err, snapshotErr) || !errors.Is(err, spanErr) {
+		t.Fatalf("expected retained snapshot and span errors, got %v", err)
 	}
 }
 
@@ -77,10 +99,12 @@ func (r scopeTestRecorder) StartRun(ctx context.Context, _ RunMeta) (context.Con
 }
 
 type scopeTestRun struct {
-	eventErr  error
-	snapshots int
-	outcome   RunOutcome
-	span      *scopeTestSpan
+	eventErr    error
+	snapshotErr error
+	spanEndErr  error
+	snapshots   int
+	outcome     RunOutcome
+	span        *scopeTestSpan
 }
 
 func (r *scopeTestRun) Event(context.Context, Event) error {
@@ -88,13 +112,13 @@ func (r *scopeTestRun) Event(context.Context, Event) error {
 }
 
 func (r *scopeTestRun) StartSpan(ctx context.Context, _ SpanStart) (context.Context, Span, error) {
-	r.span = &scopeTestSpan{}
+	r.span = &scopeTestSpan{err: r.spanEndErr}
 	return ctx, r.span, nil
 }
 
 func (r *scopeTestRun) Snapshot(context.Context, SessionState) error {
 	r.snapshots++
-	return nil
+	return r.snapshotErr
 }
 
 func (r *scopeTestRun) Close(_ context.Context, outcome RunOutcome) error {
@@ -104,9 +128,10 @@ func (r *scopeTestRun) Close(_ context.Context, outcome RunOutcome) error {
 
 type scopeTestSpan struct {
 	end SpanEnd
+	err error
 }
 
 func (s *scopeTestSpan) End(_ context.Context, end SpanEnd) error {
 	s.end = end
-	return nil
+	return s.err
 }

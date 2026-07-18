@@ -23,19 +23,13 @@ func TestContextLifecycleUsesConfiguredRecorder(t *testing.T) {
 		t.Fatal("configured recorder was not propagated to the run context")
 	}
 
-	if err := Record(runCtx, Event{Kind: KindUserInput}); err != nil {
-		t.Fatalf("record event: %v", err)
-	}
+	Record(runCtx, Event{Kind: KindUserInput})
 	spanCtx, err := StartSpan(runCtx, SpanStart{Kind: SpanLLMCall})
 	if err != nil {
 		t.Fatalf("start span: %v", err)
 	}
-	if err := EndSpan(spanCtx, SpanEnd{Status: StatusSuccess}); err != nil {
-		t.Fatalf("end span: %v", err)
-	}
-	if err := Snapshot(spanCtx, SessionState{}); err != nil {
-		t.Fatalf("record snapshot: %v", err)
-	}
+	EndSpan(spanCtx, SpanEnd{Status: StatusSuccess})
+	Snapshot(spanCtx, SessionState{})
 	if err := CloseRun(spanCtx, RunOutcome{Status: StatusSuccess, Reason: EndReasonExit}); err != nil {
 		t.Fatalf("close run: %v", err)
 	}
@@ -53,19 +47,13 @@ func TestContextHelpersDefaultToNoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start no-op run: %v", err)
 	}
-	if err := Record(ctx, Event{}); err != nil {
-		t.Fatalf("record no-op event: %v", err)
-	}
+	Record(ctx, Event{})
 	ctx, err = StartSpan(ctx, SpanStart{})
 	if err != nil {
 		t.Fatalf("start no-op span: %v", err)
 	}
-	if err := EndSpan(ctx, SpanEnd{}); err != nil {
-		t.Fatalf("end no-op span: %v", err)
-	}
-	if err := Snapshot(ctx, SessionState{}); err != nil {
-		t.Fatalf("record no-op snapshot: %v", err)
-	}
+	EndSpan(ctx, SpanEnd{})
+	Snapshot(ctx, SessionState{})
 	if err := CloseRun(ctx, RunOutcome{}); err != nil {
 		t.Fatalf("close no-op run: %v", err)
 	}
@@ -83,12 +71,8 @@ func TestContextRecordersAreIsolated(t *testing.T) {
 		t.Fatalf("start second run: %v", err)
 	}
 
-	if err := Record(firstCtx, Event{}); err != nil {
-		t.Fatalf("record first event: %v", err)
-	}
-	if err := Record(secondCtx, Event{}); err != nil {
-		t.Fatalf("record second event: %v", err)
-	}
+	Record(firstCtx, Event{})
+	Record(secondCtx, Event{})
 
 	if firstRun.events != 1 || secondRun.events != 1 {
 		t.Fatalf("contexts shared recorder state: first=%d second=%d", firstRun.events, secondRun.events)

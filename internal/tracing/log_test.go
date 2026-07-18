@@ -20,19 +20,13 @@ func TestLogRecorderLogsRunLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := Record(ctx, Event{Kind: KindUserInput}); err != nil {
-		t.Fatalf("record event: %v", err)
-	}
+	Record(ctx, Event{Kind: KindUserInput})
 	spanCtx, err := StartSpan(ctx, SpanStart{Kind: SpanLLMCall})
 	if err != nil {
 		t.Fatalf("start span: %v", err)
 	}
-	if err := EndSpan(spanCtx, SpanEnd{Status: StatusSuccess}); err != nil {
-		t.Fatalf("end span: %v", err)
-	}
-	if err := Snapshot(ctx, SessionState{}); err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
+	EndSpan(spanCtx, SpanEnd{Status: StatusSuccess})
+	Snapshot(ctx, SessionState{})
 	if err := CloseRun(ctx, RunOutcome{Status: StatusSuccess, Reason: EndReasonExit}); err != nil {
 		t.Fatalf("close run: %v", err)
 	}

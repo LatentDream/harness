@@ -30,7 +30,7 @@ func WithStatus(ctx context.Context, io input.IO, status string, run func() erro
 }
 
 func recordStatus(ctx context.Context, status string) {
-	_ = tracing.Record(ctx, tracing.Event{
+	tracing.Record(ctx, tracing.Event{
 		Kind: tracing.KindOutput,
 		Payload: struct {
 			Stream string `json:"stream"`

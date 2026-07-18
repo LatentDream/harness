@@ -57,7 +57,7 @@ func LLMCall(
 		Round    int         `json:"round"`
 		Message  llm.Message `json:"message"`
 	}{Provider: response.Provider, Model: response.Model, Round: round, Message: response.Message})
-	_ = tracing.Record(ctx, tracing.Event{
+	tracing.Record(ctx, tracing.Event{
 		Kind:   tracing.KindAssistantMessage,
 		TurnID: turnID,
 		Payload: struct {

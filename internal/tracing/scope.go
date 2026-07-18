@@ -54,7 +54,7 @@ func (s *RunScope) SetReason(reason EndReason) {
 // Snapshot records conversation state for the run.
 func (s *RunScope) Snapshot(state SessionState) {
 	if s != nil {
-		_ = Snapshot(s.ctx, state)
+		Snapshot(s.ctx, state)
 	}
 }
 
@@ -73,7 +73,7 @@ func (s *RunScope) End(runErr *error, state func() SessionState) {
 	}
 	ctx := context.WithoutCancel(s.ctx)
 	if state != nil {
-		_ = Snapshot(ctx, state())
+		Snapshot(ctx, state())
 	}
 
 	traceErr := Checkpoint(ctx)
@@ -103,7 +103,7 @@ func (s *SpanScope) End(err error, payload any) {
 	if s == nil {
 		return
 	}
-	_ = EndSpan(s.ctx, SpanEnd{
+	EndSpan(s.ctx, SpanEnd{
 		Status:  StatusFromError(err),
 		Error:   ErrorFrom(err),
 		Payload: payload,
@@ -156,14 +156,14 @@ func (s *TurnScope) Rollback(conversationLength int, state SessionState) {
 	if s == nil {
 		return
 	}
-	_ = Record(s.ctx, Event{
+	Record(s.ctx, Event{
 		Kind:   KindSessionRollback,
 		TurnID: s.id,
 		Payload: struct {
 			ConversationLength int `json:"conversationLength"`
 		}{ConversationLength: conversationLength},
 	})
-	_ = Snapshot(s.ctx, state)
+	Snapshot(s.ctx, state)
 	s.snapshotted = true
 }
 
@@ -173,7 +173,7 @@ func (s *TurnScope) End(err error, finalAnswer string, state SessionState) {
 		return
 	}
 	if !s.snapshotted {
-		_ = Snapshot(s.ctx, state)
+		Snapshot(s.ctx, state)
 	}
 	s.span.End(err, TurnOutcome{
 		Status:      StatusFromError(err),
@@ -192,7 +192,7 @@ func (s *TurnScope) Checkpoint() error {
 
 // UserInput records user-provided text and associates it with an optional turn.
 func UserInput(ctx context.Context, turnID string, text string) {
-	_ = Record(ctx, Event{
+	Record(ctx, Event{
 		Kind:   KindUserInput,
 		TurnID: turnID,
 		Payload: struct {

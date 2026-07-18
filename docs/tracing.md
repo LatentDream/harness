@@ -110,8 +110,8 @@ Call sites primarily use:
 func Init(context.Context, Recorder) context.Context
 func BeginRun(context.Context, RunMeta) (context.Context, *RunScope, error)
 func BeginSpan(context.Context, SpanStart) (context.Context, *SpanScope, error)
-func Record(context.Context, Event) error
-func Snapshot(context.Context, SessionState) error
+func Record(context.Context, Event)
+func Snapshot(context.Context, SessionState)
 func Checkpoint(context.Context) error
 ```
 
@@ -143,9 +143,11 @@ type Reader interface {
 }
 ```
 
-Recording methods return errors because serialization, redaction, and storage
-can fail. Context helpers retain those errors until `Checkpoint` or run
-finalization so ordinary business logic does not need repetitive error joins.
+Low-level recorder methods return errors because serialization, redaction, and
+storage can fail. High-level context helpers retain those errors until
+`Checkpoint` or run finalization, so ordinary business logic does not need
+repetitive error joins. Best-effort recorders report failures internally and
+return nil; strict recorders return failures for the next checkpoint.
 
 All context operations fall back to usable no-op recorder, run, and span
 implementations, so instrumentation does not require nil checks or initialization

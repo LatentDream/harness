@@ -22,7 +22,7 @@ func Write(ctx context.Context, io input.IO, stream string, text string) error {
 		return err
 	}
 
-	_ = tracing.Record(ctx, tracing.Event{
+	tracing.Record(ctx, tracing.Event{
 		Kind: tracing.KindOutput,
 		Payload: struct {
 			Stream string `json:"stream"`

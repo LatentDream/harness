@@ -55,12 +55,10 @@ func StartRun(ctx context.Context, meta RunMeta) (context.Context, error) {
 	return context.WithValue(runCtx, runContextKey{}, &runState{run: run}), nil
 }
 
-// Record records an event on the active run. It is a no-op when ctx has no
-// active run.
-func Record(ctx context.Context, event Event) error {
+// Record records an event and retains any recorder error for the next checkpoint.
+func Record(ctx context.Context, event Event) {
 	err := runFromContext(ctx).Event(normalizedContext(ctx), event)
 	runStateFromContext(ctx).record(err)
-	return err
 }
 
 // StartSpan starts a child operation on the active run and adds it to the
@@ -88,18 +86,16 @@ func StartSpan(ctx context.Context, start SpanStart) (context.Context, error) {
 	return context.WithValue(spanCtx, spanContextKey{}, span), nil
 }
 
-// EndSpan ends the span in ctx. It is a no-op when ctx has no active span.
-func EndSpan(ctx context.Context, end SpanEnd) error {
+// EndSpan ends the active span and retains any recorder error.
+func EndSpan(ctx context.Context, end SpanEnd) {
 	err := spanFromContext(ctx).End(normalizedContext(ctx), end)
 	runStateFromContext(ctx).record(err)
-	return err
 }
 
-// Snapshot records conversation state on the active run.
-func Snapshot(ctx context.Context, state SessionState) error {
+// Snapshot records conversation state and retains any recorder error.
+func Snapshot(ctx context.Context, state SessionState) {
 	err := runFromContext(ctx).Snapshot(normalizedContext(ctx), state)
 	runStateFromContext(ctx).record(err)
-	return err
 }
 
 // CloseRun finalizes the active run.
