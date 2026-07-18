@@ -184,6 +184,7 @@ const (
 	SpanToolCall SpanKind = "tool.call"
 )
 
+// Session returns the conversation from the latest session snapshot.
 func (t *Trace) Session() (session.Session, error) {
 	if t == nil || len(t.Snapshots) == 0 {
 		return session.Session{}, ErrNoSnapshot
@@ -192,6 +193,7 @@ func (t *Trace) Session() (session.Session, error) {
 	return sessionFromSnapshot(t.Snapshots[len(t.Snapshots)-1]), nil
 }
 
+// SessionAt returns the latest conversation snapshot at or before sequence.
 func (t *Trace) SessionAt(sequence uint64) (session.Session, error) {
 	if t == nil {
 		return session.Session{}, ErrNoSnapshot

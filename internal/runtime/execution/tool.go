@@ -12,7 +12,7 @@ import (
 )
 
 func ToolCall(ctx context.Context, io input.IO, toolsByName map[string]model.Tool, call llm.ToolCall, turnID string) (llm.Message, error) {
-	spanCtx, err := tracing.StartSpan(ctx, tracing.SpanStart{
+	spanCtx, span, err := tracing.BeginSpan(ctx, tracing.SpanStart{
 		Kind:    tracing.SpanToolCall,
 		TurnID:  turnID,
 		Payload: call,
@@ -46,34 +46,14 @@ func ToolCall(ctx context.Context, io input.IO, toolsByName map[string]model.Too
 	message := llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: result}
 	operationErr := errors.Join(statusErr, executionErr)
 
-	endErr := tracing.EndSpan(spanCtx, tracing.SpanEnd{
-		Status:  toolTraceStatus(operationErr),
-		Error:   toolTraceError(operationErr),
-		Payload: message,
-	})
+	span.End(operationErr, message)
+	traceErr := tracing.Checkpoint(spanCtx)
 	if statusErr != nil {
-		return llm.Message{}, errors.Join(statusErr, endErr)
+		return llm.Message{}, errors.Join(statusErr, traceErr)
 	}
-	if endErr != nil {
-		return llm.Message{}, fmt.Errorf("end tool trace: %w", endErr)
+	if traceErr != nil {
+		return llm.Message{}, traceErr
 	}
 
 	return message, nil
-}
-
-func toolTraceStatus(err error) tracing.Status {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return tracing.StatusCancelled
-	}
-	if err != nil {
-		return tracing.StatusFailure
-	}
-	return tracing.StatusSuccess
-}
-
-func toolTraceError(err error) *tracing.TraceError {
-	if err == nil {
-		return nil
-	}
-	return &tracing.TraceError{Message: err.Error()}
 }

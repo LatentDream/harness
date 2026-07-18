@@ -6,6 +6,7 @@ type noopRecorder struct{}
 type noopRun struct{}
 type noopSpan struct{}
 
+// Noop returns a recorder that discards all tracing operations.
 func Noop() Recorder {
 	return noopRecorder{}
 }

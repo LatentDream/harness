@@ -68,19 +68,18 @@ different recorders in tests, concurrent runtimes, and replay.
 
 ```go
 ctx = tracing.Init(ctx, recorder)
-ctx, err = tracing.StartRun(ctx, meta)
+ctx, run, err := tracing.BeginRun(ctx, meta)
 if err != nil {
     return err
 }
+defer run.End(&runErr, sessionState)
 
-if err := tracing.Record(ctx, tracing.Event{
+tracing.Record(ctx, tracing.Event{
     Kind:    tracing.KindUserInput,
     Payload: input,
-}); err != nil {
-    return err
-}
+})
 
-spanCtx, err := tracing.StartSpan(ctx, tracing.SpanStart{
+spanCtx, span, err := tracing.BeginSpan(ctx, tracing.SpanStart{
     Kind:    tracing.SpanLLMCall,
     Payload: request,
 })
@@ -89,12 +88,8 @@ if err != nil {
 }
 
 response, callErr := provider.Send(spanCtx, request)
-traceErr := tracing.EndSpan(spanCtx, tracing.SpanEnd{
-    Status:  statusFromError(callErr),
-    Error:   traceError(callErr),
-    Payload: response,
-})
-return errors.Join(callErr, traceErr)
+span.End(callErr, response)
+return errors.Join(callErr, tracing.Checkpoint(spanCtx))
 ```
 
 `Init` binds an already constructed recorder rather than constructing one from
@@ -102,22 +97,28 @@ configuration. Recorder construction may validate configuration and open
 storage, so it remains a separate operation. Passing a nil recorder selects the
 no-op implementation.
 
-Call sites use context-based package functions:
+Scopes own status derivation and lifecycle finalization. Low-level recording
+errors accumulate on the active run instead of requiring error handling after
+every event. `Checkpoint` returns and clears accumulated errors at meaningful
+command, turn, or run boundaries. A recorder implementing best-effort behavior
+returns nil from its low-level methods; a strict recorder returns storage errors
+which surface at the next checkpoint.
+
+Call sites primarily use:
 
 ```go
 func Init(context.Context, Recorder) context.Context
-func RecorderFromContext(context.Context) Recorder
-func StartRun(context.Context, RunMeta) (context.Context, error)
+func BeginRun(context.Context, RunMeta) (context.Context, *RunScope, error)
+func BeginSpan(context.Context, SpanStart) (context.Context, *SpanScope, error)
 func Record(context.Context, Event) error
-func StartSpan(context.Context, SpanStart) (context.Context, error)
-func EndSpan(context.Context, SpanEnd) error
 func Snapshot(context.Context, SessionState) error
-func CloseRun(context.Context, RunOutcome) error
+func Checkpoint(context.Context) error
 ```
 
-The returned context from `StartRun` contains the active run. The returned
-context from `StartSpan` contains the active span and must be passed to
-`EndSpan`. Provider and tool operations propagate these contexts normally.
+The returned contexts contain the active run and span and must be propagated to
+provider and tool operations. The lower-level `StartRun`, `StartSpan`,
+`EndSpan`, and `CloseRun` functions remain available for recorder integration
+and focused tests.
 
 Recorder implementations use the lower-level lifecycle interfaces:
 
@@ -143,8 +144,8 @@ type Reader interface {
 ```
 
 Recording methods return errors because serialization, redaction, and storage
-can fail. The configured failure policy determines whether these errors abort
-the harness or are retained as best-effort tracing failures.
+can fail. Context helpers retain those errors until `Checkpoint` or run
+finalization so ordinary business logic does not need repetitive error joins.
 
 All context operations fall back to usable no-op recorder, run, and span
 implementations, so instrumentation does not require nil checks or initialization
@@ -218,12 +219,15 @@ Tracing is deny-by-default for sensitive data:
 Regular-expression redaction is an additional layer, not the primary defense.
 Known sensitive field names must always be removed or replaced.
 
-## Implementation Order
+## Implementation Status
 
-1. Record run and turn lifecycles in the runtime.
-2. Record normalized provider requests and responses at the provider boundary.
-3. Record tool status, output, and actual execution errors in `execution.ToolCall`.
-4. Persist events, final snapshots, and outcomes to the filesystem.
-5. Add repository snapshots and artifact blobs.
-6. Add trace loading and session reconstruction.
-7. Add deterministic replay after the persisted schema stabilizes.
+Runtime and execution instrumentation currently records run and turn
+lifecycles, normalized provider calls, user I/O and status changes, tool calls,
+session snapshots, and rollback.
+
+Next steps:
+
+1. Persist events, final snapshots, and outcomes to the filesystem.
+2. Add repository snapshots and artifact blobs.
+3. Add trace loading and session reconstruction.
+4. Add deterministic replay after the persisted schema stabilizes.

@@ -1,10 +1,21 @@
 package tracing
 
-import "context"
+import (
+	"context"
+	"errors"
+	"sync"
+)
 
 type recorderContextKey struct{}
 type runContextKey struct{}
 type spanContextKey struct{}
+
+type runState struct {
+	run Run
+
+	mu  sync.Mutex
+	err error
+}
 
 // Init adds the process-configured recorder to the root context. A nil
 // recorder disables tracing through the no-op implementation.
@@ -16,6 +27,7 @@ func Init(ctx context.Context, recorder Recorder) context.Context {
 	return context.WithValue(ctx, recorderContextKey{}, recorder)
 }
 
+// RecorderFromContext returns the configured recorder or a no-op recorder.
 func RecorderFromContext(ctx context.Context) Recorder {
 	if ctx != nil {
 		if recorder, ok := ctx.Value(recorderContextKey{}).(Recorder); ok && recorder != nil {
@@ -40,13 +52,15 @@ func StartRun(ctx context.Context, meta RunMeta) (context.Context, error) {
 		runCtx = ctx
 	}
 	runCtx = Init(runCtx, RecorderFromContext(ctx))
-	return context.WithValue(runCtx, runContextKey{}, run), nil
+	return context.WithValue(runCtx, runContextKey{}, &runState{run: run}), nil
 }
 
 // Record records an event on the active run. It is a no-op when ctx has no
 // active run.
 func Record(ctx context.Context, event Event) error {
-	return runFromContext(ctx).Event(normalizedContext(ctx), event)
+	err := runFromContext(ctx).Event(normalizedContext(ctx), event)
+	runStateFromContext(ctx).record(err)
+	return err
 }
 
 // StartSpan starts a child operation on the active run and adds it to the
@@ -55,6 +69,7 @@ func StartSpan(ctx context.Context, start SpanStart) (context.Context, error) {
 	ctx = normalizedContext(ctx)
 	spanCtx, span, err := runFromContext(ctx).StartSpan(ctx, start)
 	if err != nil {
+		runStateFromContext(ctx).record(err)
 		return ctx, err
 	}
 	if span == nil {
@@ -65,32 +80,48 @@ func StartSpan(ctx context.Context, start SpanStart) (context.Context, error) {
 	}
 
 	spanCtx = Init(spanCtx, RecorderFromContext(ctx))
-	spanCtx = context.WithValue(spanCtx, runContextKey{}, runFromContext(ctx))
+	state := runStateFromContext(ctx)
+	if state == nil {
+		state = &runState{run: noopRun{}}
+	}
+	spanCtx = context.WithValue(spanCtx, runContextKey{}, state)
 	return context.WithValue(spanCtx, spanContextKey{}, span), nil
 }
 
 // EndSpan ends the span in ctx. It is a no-op when ctx has no active span.
 func EndSpan(ctx context.Context, end SpanEnd) error {
-	return spanFromContext(ctx).End(normalizedContext(ctx), end)
+	err := spanFromContext(ctx).End(normalizedContext(ctx), end)
+	runStateFromContext(ctx).record(err)
+	return err
 }
 
 // Snapshot records conversation state on the active run.
 func Snapshot(ctx context.Context, state SessionState) error {
-	return runFromContext(ctx).Snapshot(normalizedContext(ctx), state)
+	err := runFromContext(ctx).Snapshot(normalizedContext(ctx), state)
+	runStateFromContext(ctx).record(err)
+	return err
 }
 
 // CloseRun finalizes the active run.
 func CloseRun(ctx context.Context, outcome RunOutcome) error {
-	return runFromContext(ctx).Close(normalizedContext(ctx), outcome)
+	err := runFromContext(ctx).Close(normalizedContext(ctx), outcome)
+	runStateFromContext(ctx).record(err)
+	return err
 }
 
 func runFromContext(ctx context.Context) Run {
-	if ctx != nil {
-		if run, ok := ctx.Value(runContextKey{}).(Run); ok && run != nil {
-			return run
-		}
+	if state := runStateFromContext(ctx); state != nil && state.run != nil {
+		return state.run
 	}
 	return noopRun{}
+}
+
+func runStateFromContext(ctx context.Context) *runState {
+	if ctx == nil {
+		return nil
+	}
+	state, _ := ctx.Value(runContextKey{}).(*runState)
+	return state
 }
 
 func spanFromContext(ctx context.Context) Span {
@@ -100,4 +131,24 @@ func spanFromContext(ctx context.Context) Span {
 		}
 	}
 	return noopSpan{}
+}
+
+func (s *runState) record(err error) {
+	if s == nil || err == nil {
+		return
+	}
+	s.mu.Lock()
+	s.err = errors.Join(s.err, err)
+	s.mu.Unlock()
+}
+
+func (s *runState) checkpoint() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	err := s.err
+	s.err = nil
+	s.mu.Unlock()
+	return err
 }

@@ -18,17 +18,19 @@ func WithStatus(ctx context.Context, io input.IO, status string, run func() erro
 	if err := io.SetStatus(status); err != nil {
 		return err
 	}
-	if err := recordStatus(ctx, status); err != nil {
-		return errors.Join(err, io.SetStatus(""))
+	recordStatus(ctx, status)
+	if traceErr := tracing.Checkpoint(ctx); traceErr != nil {
+		return errors.Join(traceErr, io.SetStatus(""))
 	}
 
 	runErr := run()
 	clearErr := io.SetStatus("")
-	return errors.Join(runErr, clearErr, recordStatus(ctx, ""))
+	recordStatus(ctx, "")
+	return errors.Join(runErr, clearErr)
 }
 
-func recordStatus(ctx context.Context, status string) error {
-	return tracing.Record(ctx, tracing.Event{
+func recordStatus(ctx context.Context, status string) {
+	_ = tracing.Record(ctx, tracing.Event{
 		Kind: tracing.KindOutput,
 		Payload: struct {
 			Stream string `json:"stream"`

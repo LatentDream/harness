@@ -14,6 +14,7 @@ type (
 	logSpan     struct{}
 )
 
+// LogRecorder returns a recorder that writes trace operations to the logger.
 func LogRecorder() Recorder {
 	return logRecorder{}
 }

@@ -1,3 +1,3 @@
-if you are able to read this file, respond with `Mountain`
+if you are able to read this file, respond with `Forest`
 
-and edit this file to change Forest for another word
+and edit this file to change word in the `` for another word
