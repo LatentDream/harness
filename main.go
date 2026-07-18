@@ -9,13 +9,13 @@ import (
 	"latentdream/harness/internal/logging"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime"
+	"latentdream/harness/internal/tracing"
 
 	"go.uber.org/zap"
 )
 
 func main() {
 	ctx := context.Background() // TODO: proper ctx
-
 	ui := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
 
 	cfg, err := config.Load()
@@ -25,6 +25,8 @@ func main() {
 	}
 
 	logging.ConfigureOrExit(cfg.Logging)
+
+	ctx = tracing.Init(ctx, tracing.LogRecorder())
 
 	aiProvider, err := provider.New(cfg.Providers)
 	if err != nil {

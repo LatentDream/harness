@@ -1,8 +1,8 @@
 {
   "userConfigPath": "~/.harness.json",
   "logging": {
-    "development": false,
-    "level": "info",
+    "development": true,
+    "level": "debug",
     "encoding": "json",
     "output": "stdout",
     "disableCaller": false,
