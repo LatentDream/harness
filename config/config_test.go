@@ -21,8 +21,8 @@ func TestLoadUsesEmbeddedDefault(t *testing.T) {
 	if config.Logging.Encoding != "json" {
 		t.Fatalf("expected default log encoding json, got %q", config.Logging.Encoding)
 	}
-	if len(config.Logging.OutputPaths) != 1 || config.Logging.OutputPaths[0] != "stdout" {
-		t.Fatalf("expected default output path stdout, got %#v", config.Logging.OutputPaths)
+	if config.Logging.Output != "stdout" {
+		t.Fatalf("expected default output stdout, got %q", config.Logging.Output)
 	}
 }
 
@@ -32,7 +32,7 @@ func TestLoadUsesEnvPath(t *testing.T) {
 			"development": true,
 			"level": "debug",
 			"encoding": "console",
-			"outputPaths": ["stderr"]
+			"output": "stderr"
 		}
 	}`)
 	t.Setenv(EnvPath, configPath)
@@ -51,8 +51,31 @@ func TestLoadUsesEnvPath(t *testing.T) {
 	if config.Logging.Encoding != "console" {
 		t.Fatalf("expected log encoding console, got %q", config.Logging.Encoding)
 	}
-	if len(config.Logging.OutputPaths) != 1 || config.Logging.OutputPaths[0] != "stderr" {
-		t.Fatalf("expected output path stderr, got %#v", config.Logging.OutputPaths)
+	if config.Logging.Output != "stderr" {
+		t.Fatalf("expected output stderr, got %q", config.Logging.Output)
+	}
+}
+
+func TestLoadReadsFileLoggingOutput(t *testing.T) {
+	configPath := writeConfig(t, t.TempDir(), "harness.json", `{
+		"logging": {
+			"level": "info",
+			"output": "file",
+			"filePath": "/tmp/harness.log"
+		}
+	}`)
+	t.Setenv(EnvPath, configPath)
+
+	config, err := Load()
+	if err != nil {
+		t.Fatalf("expected env config to load, got %v", err)
+	}
+
+	if config.Logging.Output != "file" {
+		t.Fatalf("expected output file, got %q", config.Logging.Output)
+	}
+	if config.Logging.FilePath != "/tmp/harness.log" {
+		t.Fatalf("expected filePath /tmp/harness.log, got %q", config.Logging.FilePath)
 	}
 }
 

@@ -2,6 +2,9 @@ package logging
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -59,6 +62,60 @@ func TestConfigureReturnsInvalidLevelError(t *testing.T) {
 
 	if err := Configure(Config{Level: "not-a-level"}); err == nil {
 		t.Fatal("expected invalid level error")
+	}
+}
+
+func TestConfigureAppendsToFileOutput(t *testing.T) {
+	useObservedLogger(t)
+
+	logPath := filepath.Join(t.TempDir(), "harness.log")
+	if err := os.WriteFile(logPath, []byte("existing\n"), 0o600); err != nil {
+		t.Fatalf("write existing log file: %v", err)
+	}
+
+	if err := Configure(Config{
+		Level:             "info",
+		Encoding:          "json",
+		Output:            OutputFile,
+		FilePath:          logPath,
+		DisableCaller:     true,
+		DisableStacktrace: true,
+	}); err != nil {
+		t.Fatalf("configure file logger: %v", err)
+	}
+
+	Log(context.Background()).Info("appended")
+	if err := Sync(); err != nil {
+		t.Fatalf("sync logger: %v", err)
+	}
+
+	contents, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+
+	logContents := string(contents)
+	if !strings.HasPrefix(logContents, "existing\n") {
+		t.Fatalf("expected log file to be appended, got %q", logContents)
+	}
+	if !strings.Contains(logContents, `"msg":"appended"`) {
+		t.Fatalf("expected appended log entry, got %q", logContents)
+	}
+}
+
+func TestConfigureRejectsFileOutputWithoutPath(t *testing.T) {
+	useObservedLogger(t)
+
+	if err := Configure(Config{Output: OutputFile}); err == nil {
+		t.Fatal("expected missing filePath error")
+	}
+}
+
+func TestConfigureRejectsUnsupportedOutput(t *testing.T) {
+	useObservedLogger(t)
+
+	if err := Configure(Config{Output: "database"}); err == nil {
+		t.Fatal("expected unsupported output error")
 	}
 }
 

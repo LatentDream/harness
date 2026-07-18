@@ -2,19 +2,29 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
+type Output string
+
+const (
+	OutputStdout Output = "stdout"
+	OutputStderr Output = "stderr"
+	OutputFile   Output = "file"
+)
+
 type Config struct {
 	Development       bool           `json:"development"`
 	Level             string         `json:"level"`
 	Encoding          string         `json:"encoding"`
-	OutputPaths       []string       `json:"outputPaths"`
-	ErrorOutputPaths  []string       `json:"errorOutputPaths"`
+	Output            Output         `json:"output"`
+	FilePath          string         `json:"filePath"`
 	InitialFields     map[string]any `json:"initialFields"`
 	DisableCaller     bool           `json:"disableCaller"`
 	DisableStacktrace bool           `json:"disableStacktrace"`
@@ -34,6 +44,11 @@ var (
 )
 
 func Configure(config Config) error {
+	outputPath, err := config.outputPath()
+	if err != nil {
+		return err
+	}
+
 	zapConfig := zap.NewProductionConfig()
 	if config.Development {
 		zapConfig = zap.NewDevelopmentConfig()
@@ -42,7 +57,7 @@ func Configure(config Config) error {
 	if config.Level != "" {
 		level, err := zapcore.ParseLevel(config.Level)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse log level %q: %w", config.Level, err)
 		}
 		zapConfig.Level = zap.NewAtomicLevelAt(level)
 	}
@@ -51,13 +66,8 @@ func Configure(config Config) error {
 		zapConfig.Encoding = config.Encoding
 	}
 
-	if len(config.OutputPaths) > 0 {
-		zapConfig.OutputPaths = config.OutputPaths
-	}
-
-	if len(config.ErrorOutputPaths) > 0 {
-		zapConfig.ErrorOutputPaths = config.ErrorOutputPaths
-	}
+	zapConfig.OutputPaths = []string{outputPath}
+	zapConfig.ErrorOutputPaths = []string{string(OutputStderr)}
 
 	zapConfig.InitialFields = config.InitialFields
 	zapConfig.DisableCaller = config.DisableCaller
@@ -70,6 +80,29 @@ func Configure(config Config) error {
 
 	SetLogger(configuredLogger)
 	return nil
+}
+
+func (config Config) outputPath() (string, error) {
+	output := Output(strings.ToLower(strings.TrimSpace(string(config.Output))))
+	if output == "" {
+		output = OutputStdout
+	}
+
+	switch output {
+	case OutputStdout, OutputStderr:
+		if strings.TrimSpace(config.FilePath) != "" {
+			return "", fmt.Errorf("logging: filePath is only valid when output is %q", OutputFile)
+		}
+		return string(output), nil
+	case OutputFile:
+		filePath := strings.TrimSpace(config.FilePath)
+		if filePath == "" {
+			return "", fmt.Errorf("logging: filePath is required when output is %q", OutputFile)
+		}
+		return filePath, nil
+	default:
+		return "", fmt.Errorf("logging: unsupported output %q, expected %q, %q, or %q", config.Output, OutputStdout, OutputStderr, OutputFile)
+	}
 }
 
 func SetLogger(configuredLogger *zap.Logger) {

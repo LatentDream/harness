@@ -3,8 +3,7 @@
     "development": false,
     "level": "info",
     "encoding": "json",
-    "outputPaths": ["stdout"],
-    "errorOutputPaths": ["stderr"],
+    "output": "stdout",
     "disableCaller": false,
     "disableStacktrace": false
   }
