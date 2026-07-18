@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadUsesEmbeddedDefault(t *testing.T) {
-	t.Setenv(ConfigPathEnv, "")
+	clearConfigEnv(t)
 	t.Setenv("HOME", t.TempDir())
 
 	config, err := Load()
@@ -30,7 +30,33 @@ func TestLoadUsesEmbeddedDefault(t *testing.T) {
 	}
 }
 
+func TestConfigEnvNamesAreDerivedFromJSONTags(t *testing.T) {
+	tests := []struct {
+		goFieldPath []string
+		expected    string
+	}{
+		{[]string{"UserConfigPath"}, "HARNESS_USER_CONFIG_PATH"},
+		{[]string{"Logging", "Development"}, "HARNESS_LOGGING_DEVELOPMENT"},
+		{[]string{"Logging", "Level"}, "HARNESS_LOGGING_LEVEL"},
+		{[]string{"Logging", "Encoding"}, "HARNESS_LOGGING_ENCODING"},
+		{[]string{"Logging", "Output"}, "HARNESS_LOGGING_OUTPUT"},
+		{[]string{"Logging", "FilePath"}, "HARNESS_LOGGING_FILE_PATH"},
+		{[]string{"Logging", "InitialFields"}, "HARNESS_LOGGING_INITIAL_FIELDS"},
+		{[]string{"Logging", "DisableCaller"}, "HARNESS_LOGGING_DISABLE_CALLER"},
+		{[]string{"Logging", "DisableStacktrace"}, "HARNESS_LOGGING_DISABLE_STACKTRACE"},
+	}
+
+	for _, test := range tests {
+		envName := configEnv(t, test.goFieldPath...)
+		if envName != test.expected {
+			t.Fatalf("expected env name %s for %v, got %s", test.expected, test.goFieldPath, envName)
+		}
+	}
+}
+
 func TestLoadUsesEnvPath(t *testing.T) {
+	clearConfigEnv(t)
+
 	configPath := writeConfig(t, t.TempDir(), "harness.json", `{
 		"logging": {
 			"development": true,
@@ -61,6 +87,8 @@ func TestLoadUsesEnvPath(t *testing.T) {
 }
 
 func TestLoadReadsFileLoggingOutput(t *testing.T) {
+	clearConfigEnv(t)
+
 	configPath := writeConfig(t, t.TempDir(), "harness.json", `{
 		"logging": {
 			"level": "info",
@@ -84,6 +112,8 @@ func TestLoadReadsFileLoggingOutput(t *testing.T) {
 }
 
 func TestLoadUsesDefaultUserConfigPath(t *testing.T) {
+	clearConfigEnv(t)
+
 	homeDir := t.TempDir()
 	writeConfig(t, homeDir, ".harness.json", `{
 		"logging": {
@@ -91,7 +121,6 @@ func TestLoadUsesDefaultUserConfigPath(t *testing.T) {
 		}
 	}`)
 	t.Setenv("HOME", homeDir)
-	t.Setenv(ConfigPathEnv, "")
 
 	config, err := Load()
 	if err != nil {
@@ -106,7 +135,32 @@ func TestLoadUsesDefaultUserConfigPath(t *testing.T) {
 	}
 }
 
+func TestLoadUsesEnvUserConfigPath(t *testing.T) {
+	clearConfigEnv(t)
+
+	configPath := writeConfig(t, t.TempDir(), "custom-harness.json", `{
+		"logging": {
+			"level": "warn"
+		}
+	}`)
+	t.Setenv(configEnv(t, "UserConfigPath"), configPath)
+
+	config, err := Load()
+	if err != nil {
+		t.Fatalf("expected env user config path to load, got %v", err)
+	}
+
+	if config.UserConfigPath != configPath {
+		t.Fatalf("expected env user config path %q, got %q", configPath, config.UserConfigPath)
+	}
+	if config.Logging.Level != "warn" {
+		t.Fatalf("expected log level warn, got %q", config.Logging.Level)
+	}
+}
+
 func TestLoadEnvPathHasPriorityOverDefaultUserConfigPath(t *testing.T) {
+	clearConfigEnv(t)
+
 	homeDir := t.TempDir()
 	writeConfig(t, homeDir, ".harness.json", `{
 		"logging": {
@@ -131,7 +185,89 @@ func TestLoadEnvPathHasPriorityOverDefaultUserConfigPath(t *testing.T) {
 	}
 }
 
+func TestLoadEnvValuesOverrideEmbeddedDefault(t *testing.T) {
+	clearConfigEnv(t)
+
+	logPath := filepath.Join(t.TempDir(), "harness.log")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(configEnv(t, "UserConfigPath"), filepath.Join(t.TempDir(), "missing-harness.json"))
+	t.Setenv(configEnv(t, "Logging", "Development"), "true")
+	t.Setenv(configEnv(t, "Logging", "Level"), "debug")
+	t.Setenv(configEnv(t, "Logging", "Encoding"), "console")
+	t.Setenv(configEnv(t, "Logging", "Output"), "file")
+	t.Setenv(configEnv(t, "Logging", "FilePath"), logPath)
+	t.Setenv(configEnv(t, "Logging", "InitialFields"), `{"service":"harness","version":1}`)
+	t.Setenv(configEnv(t, "Logging", "DisableCaller"), "true")
+	t.Setenv(configEnv(t, "Logging", "DisableStacktrace"), "true")
+
+	config, err := Load()
+	if err != nil {
+		t.Fatalf("expected env overrides to load, got %v", err)
+	}
+
+	if !config.Logging.Development {
+		t.Fatal("expected env development true")
+	}
+	if config.Logging.Level != "debug" {
+		t.Fatalf("expected env level debug, got %q", config.Logging.Level)
+	}
+	if config.Logging.Encoding != "console" {
+		t.Fatalf("expected env encoding console, got %q", config.Logging.Encoding)
+	}
+	if config.Logging.Output != "file" {
+		t.Fatalf("expected env output file, got %q", config.Logging.Output)
+	}
+	if config.Logging.FilePath != logPath {
+		t.Fatalf("expected env file path %q, got %q", logPath, config.Logging.FilePath)
+	}
+	if config.Logging.InitialFields["service"] != "harness" {
+		t.Fatalf("expected env initial field service harness, got %v", config.Logging.InitialFields["service"])
+	}
+	if config.Logging.InitialFields["version"] != float64(1) {
+		t.Fatalf("expected env initial field version 1, got %v", config.Logging.InitialFields["version"])
+	}
+	if !config.Logging.DisableCaller {
+		t.Fatal("expected env disable caller true")
+	}
+	if !config.Logging.DisableStacktrace {
+		t.Fatal("expected env disable stacktrace true")
+	}
+}
+
+func TestLoadEnvValuesOverrideConfigFile(t *testing.T) {
+	clearConfigEnv(t)
+
+	configPath := writeConfig(t, t.TempDir(), "harness.json", `{
+		"logging": {
+			"level": "warn",
+			"output": "stderr",
+			"disableCaller": false
+		}
+	}`)
+	t.Setenv(ConfigPathEnv, configPath)
+	t.Setenv(configEnv(t, "Logging", "Level"), "error")
+	t.Setenv(configEnv(t, "Logging", "Output"), "stdout")
+	t.Setenv(configEnv(t, "Logging", "DisableCaller"), "true")
+
+	config, err := Load()
+	if err != nil {
+		t.Fatalf("expected env overrides to load, got %v", err)
+	}
+
+	if config.Logging.Level != "error" {
+		t.Fatalf("expected env log level error, got %q", config.Logging.Level)
+	}
+	if config.Logging.Output != "stdout" {
+		t.Fatalf("expected env output stdout, got %q", config.Logging.Output)
+	}
+	if !config.Logging.DisableCaller {
+		t.Fatal("expected env disableCaller true")
+	}
+}
+
 func TestLoadRejectsUnknownFields(t *testing.T) {
+	clearConfigEnv(t)
+
 	configPath := writeConfig(t, t.TempDir(), "harness.json", `{
 		"logging": {},
 		"unknown": true
@@ -148,6 +284,8 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 }
 
 func TestLoadRejectsWrongType(t *testing.T) {
+	clearConfigEnv(t)
+
 	configPath := writeConfig(t, t.TempDir(), "harness.json", `{
 		"logging": {
 			"level": 42
@@ -164,7 +302,50 @@ func TestLoadRejectsWrongType(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidBoolEnv(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(configEnv(t, "Logging", "Development"), "sometimes")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected invalid bool env error")
+	}
+	if !strings.Contains(err.Error(), `parse env HARNESS_LOGGING_DEVELOPMENT: invalid boolean "sometimes"`) {
+		t.Fatalf("expected clear bool env error, got %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidInitialFieldsEnv(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(configEnv(t, "Logging", "InitialFields"), `[]`)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected invalid initial fields env error")
+	}
+	if !strings.Contains(err.Error(), `parse env HARNESS_LOGGING_INITIAL_FIELDS: invalid type: got array, want object`) {
+		t.Fatalf("expected clear initial fields env error, got %v", err)
+	}
+}
+
+func TestLoadRejectsEmptyUserConfigPathEnv(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv(configEnv(t, "UserConfigPath"), "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected empty user config path env error")
+	}
+	if !strings.Contains(err.Error(), `parse env HARNESS_USER_CONFIG_PATH: value must not be empty`) {
+		t.Fatalf("expected clear user config path env error, got %v", err)
+	}
+}
+
 func TestLoadReturnsErrorWhenEnvPathIsMissing(t *testing.T) {
+	clearConfigEnv(t)
+
 	configPath := filepath.Join(t.TempDir(), "missing.json")
 	t.Setenv(ConfigPathEnv, configPath)
 
@@ -175,6 +356,48 @@ func TestLoadReturnsErrorWhenEnvPathIsMissing(t *testing.T) {
 	if !strings.Contains(err.Error(), "read config") {
 		t.Fatalf("expected read config error, got %v", err)
 	}
+}
+
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+
+	envNames, err := configValueEnvNames()
+	if err != nil {
+		t.Fatalf("config value env names: %v", err)
+	}
+	envNames = append(envNames, ConfigPathEnv)
+
+	for _, envName := range envNames {
+		envName := envName
+		previous, existed := os.LookupEnv(envName)
+		if err := os.Unsetenv(envName); err != nil {
+			t.Fatalf("unset %s: %v", envName, err)
+		}
+
+		t.Cleanup(func() {
+			if existed {
+				if err := os.Setenv(envName, previous); err != nil {
+					t.Fatalf("restore %s: %v", envName, err)
+				}
+				return
+			}
+
+			if err := os.Unsetenv(envName); err != nil {
+				t.Fatalf("restore unset %s: %v", envName, err)
+			}
+		})
+	}
+}
+
+func configEnv(t *testing.T, goFieldPath ...string) string {
+	t.Helper()
+
+	envName, err := configValueEnvName(goFieldPath...)
+	if err != nil {
+		t.Fatalf("config env name for %v: %v", goFieldPath, err)
+	}
+
+	return envName
 }
 
 func writeConfig(t *testing.T, dir string, name string, contents string) string {
