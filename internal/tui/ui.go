@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"latentdream/harness/internal/input"
+	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
 )
 
@@ -20,6 +21,7 @@ type Options struct {
 	Model            string
 	WorkingDirectory string
 	Commands         *command.Registry
+	Models           []provider.Selection
 }
 
 type UI struct {
@@ -394,6 +396,13 @@ func (m *model) apply(event input.Event) {
 			m.blocks[index].interrupted = true
 			delete(m.streams, key)
 		}
+	case input.EventProviderSelection:
+		if event.Provider != "" {
+			m.provider = event.Provider
+		}
+		if event.Model != "" {
+			m.modelName = event.Model
+		}
 	}
 }
 
@@ -505,7 +514,24 @@ func (u *UI) pickCommand(ctx context.Context, state *model, prefix string, query
 		state.editor.insert(prefix)
 		return nil
 	}
+	if selected == prefix+"model" {
+		return u.pickModel(ctx, state, selected)
+	}
 	state.editor.set(selected + " ")
+	return nil
+}
+
+func (u *UI) pickModel(ctx context.Context, state *model, commandText string) error {
+	selected, ok, err := u.runPicker(ctx, modelCandidates(u.options.Models), "Models > ", "", false)
+	if err != nil {
+		state.editor.set(commandText + " ")
+		return err
+	}
+	if !ok {
+		state.editor.set(commandText + " ")
+		return nil
+	}
+	state.editor.set(commandText + " " + selected)
 	return nil
 }
 

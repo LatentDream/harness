@@ -522,8 +522,90 @@ func TestRunWritesHelpWithoutProviderCall(t *testing.T) {
 	if len(aiProvider.queries) != 0 {
 		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
 	}
-	expectedHelp := "Available commands:\n  :copy, /copy - copy latest message to clipboard\n  :q, /exit, /quit - exit harness\n  :help, /help - show available commands"
+	expectedHelp := "Available commands:\n  :copy, /copy - copy latest message to clipboard\n  :q, /exit, /quit - exit harness\n  :help, /help - show available commands\n  :model, /model - switch provider/model"
 	if !reflect.DeepEqual(userInput.responses, []string{expectedHelp}) {
+		t.Fatalf("unexpected responses: %#v", userInput.responses)
+	}
+}
+
+func TestRunModelListsAllSelectionsWithoutProviderCall(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "/model"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{
+		current: provider.Selection{Provider: "openai", Model: "gpt-4.1"},
+		available: []provider.Selection{
+			{Provider: "openai", Model: "gpt-4.1"},
+			{Provider: "openai", Model: "gpt-4o"},
+			{Provider: "anthropic", Model: "claude-sonnet-4"},
+		},
+	}
+
+	runtime := New(aiProvider, userInput, userInput, Options{})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected runtime to handle model list cleanly, got %v", err)
+	}
+	if len(aiProvider.queries) != 0 {
+		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
+	}
+	if len(userInput.responses) != 1 {
+		t.Fatalf("expected one response, got %#v", userInput.responses)
+	}
+	for _, expected := range []string{"* openai/gpt-4.1", "  openai/gpt-4o", "  anthropic/claude-sonnet-4"} {
+		if !strings.Contains(userInput.responses[0], expected) {
+			t.Fatalf("expected model output to contain %q, got %q", expected, userInput.responses[0])
+		}
+	}
+}
+
+func TestRunModelSwitchesProviderAndModel(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "/model anthropic/claude-sonnet-4"}, {text: "hello"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{
+		current:   provider.Selection{Provider: "openai", Model: "gpt-4.1"},
+		responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "world"}}},
+	}
+	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
+
+	runtime := New(aiProvider, userInput, userInput, Options{})
+	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
+		t.Fatalf("expected runtime to switch model cleanly, got %v", err)
+	}
+	expectedUseCalls := []provider.Selection{{Provider: "anthropic", Model: "claude-sonnet-4"}}
+	if !reflect.DeepEqual(aiProvider.useCalls, expectedUseCalls) {
+		t.Fatalf("expected use calls %#v, got %#v", expectedUseCalls, aiProvider.useCalls)
+	}
+	if aiProvider.current != (provider.Selection{Provider: "anthropic", Model: "claude-sonnet-4"}) {
+		t.Fatalf("expected current selection to switch, got %#v", aiProvider.current)
+	}
+	if !containsProviderSelectionEvent(userInput.events, provider.Selection{Provider: "anthropic", Model: "claude-sonnet-4"}) {
+		t.Fatalf("expected provider selection event, got %#v", userInput.events)
+	}
+	span := findTraceSpan(recorder.run.spans, tracing.SpanLLMCall)
+	if span == nil {
+		t.Fatal("expected LLM call span")
+	}
+	payload, ok := span.start.Payload.(struct {
+		Provider string      `json:"provider"`
+		Model    string      `json:"model"`
+		Round    int         `json:"round"`
+		Request  llm.Request `json:"request"`
+	})
+	if !ok || payload.Provider != "anthropic" || payload.Model != "claude-sonnet-4" {
+		t.Fatalf("expected LLM span to use switched selection, got %#v", span.start.Payload)
+	}
+}
+
+func TestRunModelErrorDoesNotTerminateRuntime(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "/model openai/missing"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{useErr: errors.New(`model "missing" is not configured for provider "openai"`)}
+
+	runtime := New(aiProvider, userInput, userInput, Options{})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected runtime to handle model error cleanly, got %v", err)
+	}
+	if len(aiProvider.queries) != 0 {
+		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
+	}
+	expected := []string{`error: model "missing" is not configured for provider "openai"`}
+	if !reflect.DeepEqual(userInput.responses, expected) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}
 }
@@ -575,6 +657,10 @@ func (s *scriptedInput) Emit(_ context.Context, event input.Event) error {
 }
 
 type fakeProvider struct {
+	current      provider.Selection
+	available    []provider.Selection
+	useCalls     []provider.Selection
+	useErr       error
 	queries      []llm.Request
 	responses    []provider.Response
 	errors       []error
@@ -591,14 +677,25 @@ func toolNames(definitions []llm.ToolDefinition) []string {
 }
 
 func (f *fakeProvider) Current() provider.Selection {
-	return provider.Selection{Provider: "fake", Model: "test"}
+	if f.current == (provider.Selection{}) {
+		return provider.Selection{Provider: "fake", Model: "test"}
+	}
+	return f.current
 }
 
 func (f *fakeProvider) Available() []provider.Selection {
-	return []provider.Selection{{Provider: "fake", Model: "test"}}
+	if f.available == nil {
+		return []provider.Selection{{Provider: "fake", Model: "test"}}
+	}
+	return append([]provider.Selection(nil), f.available...)
 }
 
 func (f *fakeProvider) Use(providerName string, modelName string) error {
+	f.useCalls = append(f.useCalls, provider.Selection{Provider: providerName, Model: modelName})
+	if f.useErr != nil {
+		return f.useErr
+	}
+	f.current = provider.Selection{Provider: providerName, Model: modelName}
 	return nil
 }
 
@@ -744,6 +841,15 @@ func findTraceSpanWithStatus(spans []*recordingTraceSpan, kind tracing.SpanKind,
 		}
 	}
 	return nil
+}
+
+func containsProviderSelectionEvent(events []input.Event, selection provider.Selection) bool {
+	for _, event := range events {
+		if event.Kind == input.EventProviderSelection && event.Provider == selection.Provider && event.Model == selection.Model {
+			return true
+		}
+	}
+	return false
 }
 
 func containsTraceEvent(events []tracing.Event, kind tracing.Kind) bool {

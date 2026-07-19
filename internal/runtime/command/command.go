@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 type Action int
@@ -15,8 +16,10 @@ const (
 )
 
 type Result struct {
-	Action Action
-	Output string
+	Action   Action
+	Output   string
+	Provider string
+	Model    string
 }
 
 type Command interface {
@@ -68,10 +71,11 @@ func (r *Registry) Register(cmd Command) {
 }
 
 func (r *Registry) Execute(ctx context.Context, input string) (Result, bool, error) {
-	name, args := parse(input)
+	name, rawArgs := parseRaw(input)
 	if name == "" {
 		return Result{}, false, nil
 	}
+	args := strings.Fields(rawArgs)
 
 	cmd := r.IsCommand(name)
 	if cmd == nil {
@@ -79,6 +83,13 @@ func (r *Registry) Execute(ctx context.Context, input string) (Result, bool, err
 			return Result{Output: fmt.Sprintf("unknown command: %s", name)}, true, nil
 		}
 		return Result{}, false, nil
+	}
+
+	if raw, ok := cmd.(interface {
+		ExecuteRaw(context.Context, string) (Result, error)
+	}); ok {
+		result, err := raw.ExecuteRaw(ctx, rawArgs)
+		return result, true, err
 	}
 
 	result, err := cmd.Execute(ctx, args)
@@ -156,11 +167,23 @@ func (r *Registry) Help() string {
 }
 
 func parse(input string) (string, []string) {
-	parts := strings.Fields(strings.TrimSpace(input))
-	if len(parts) == 0 {
+	name, rawArgs := parseRaw(input)
+	if name == "" {
 		return "", nil
 	}
-	return parts[0], parts[1:]
+	return name, strings.Fields(rawArgs)
+}
+
+func parseRaw(input string) (string, string) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "", ""
+	}
+	index := strings.IndexFunc(input, unicode.IsSpace)
+	if index < 0 {
+		return input, ""
+	}
+	return input[:index], strings.TrimSpace(input[index:])
 }
 
 func normalize(name string) string {

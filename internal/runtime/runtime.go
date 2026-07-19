@@ -24,7 +24,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxToolRounds = 20 // TODO: make configurable
+const maxToolRounds = 64 // TODO: make configurable
 
 type Runtime struct {
 	id uuid.UUID
@@ -63,6 +63,7 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 		clipboard: options.Clipboard,
 	}
 	r.commands.Register(command.NewCopyCmd(r.latestCopyableMessage, r.clipboard))
+	r.commands.Register(command.NewModelCmd(r.Provider))
 	return r
 }
 
@@ -164,6 +165,13 @@ func (r *Runtime) handleCommand(ctx context.Context, text string, commandText st
 	var writeErr error
 	if result.Output != "" {
 		writeErr = execution.Write(ctx, r.output, input.StreamStdout, result.Output)
+	}
+	if result.Provider != "" || result.Model != "" {
+		writeErr = errors.Join(writeErr, execution.Emit(ctx, r.output, input.Event{
+			Kind:     input.EventProviderSelection,
+			Provider: result.Provider,
+			Model:    result.Model,
+		}))
 	}
 	span.End(writeErr, result)
 	return result.Action, errors.Join(writeErr, span.Checkpoint())

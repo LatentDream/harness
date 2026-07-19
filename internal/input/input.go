@@ -31,6 +31,7 @@ const (
 	EventAssistantDelta     EventKind = "assistant.delta"
 	EventAssistantCompleted EventKind = "assistant.completed"
 	EventAssistantAborted   EventKind = "assistant.aborted"
+	EventProviderSelection  EventKind = "provider.selection"
 )
 
 type Stream string
@@ -41,9 +42,11 @@ const (
 )
 
 type Event struct {
-	Kind   EventKind `json:"kind"`
-	TurnID string    `json:"turnId,omitempty"`
-	Round  int       `json:"round,omitempty"`
-	Stream Stream    `json:"stream,omitempty"`
-	Text   string    `json:"text,omitempty"`
+	Kind     EventKind `json:"kind"`
+	TurnID   string    `json:"turnId,omitempty"`
+	Round    int       `json:"round,omitempty"`
+	Stream   Stream    `json:"stream,omitempty"`
+	Text     string    `json:"text,omitempty"`
+	Provider string    `json:"provider,omitempty"`
+	Model    string    `json:"model,omitempty"`
 }

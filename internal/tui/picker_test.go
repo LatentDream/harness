@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
 )
 
@@ -15,6 +16,19 @@ func TestCommandCandidatesUseRequestedPrefix(t *testing.T) {
 	want := []string{":q\texit harness", ":help\tshow available commands"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestModelCandidatesPreserveModelWhitespace(t *testing.T) {
+	got := modelCandidates([]provider.Selection{
+		{Provider: "openai", Model: "gpt 4o"},
+		{Provider: "anthropic", Model: "claude sonnet 4"},
+		{Provider: "", Model: "ignored"},
+		{Provider: "local", Model: ""},
+	})
+	want := []string{"anthropic/claude sonnet 4", "openai/gpt 4o"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
 	}
 }
 

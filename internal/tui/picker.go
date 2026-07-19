@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
 )
 
@@ -72,6 +73,18 @@ func commandCandidates(registry *command.Registry, prefix string) []string {
 			result = append(result, mapping+"\t"+entry.Description)
 		}
 	}
+	return result
+}
+
+func modelCandidates(selections []provider.Selection) []string {
+	result := make([]string, 0, len(selections))
+	for _, selection := range selections {
+		if selection.Provider == "" || selection.Model == "" {
+			continue
+		}
+		result = append(result, selection.Provider+"/"+selection.Model)
+	}
+	sort.Strings(result)
 	return result
 }
 

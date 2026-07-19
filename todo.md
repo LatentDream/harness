@@ -2,23 +2,28 @@
 
 ## Features:
 
+**Agent:**
 - [x] `:copy` `/copy` to copy the latest message to the clipboard
+- [x] keyboard shortcuts with ctrl+x y (for to copy the latest message to the clipboard)
+- [x] `:model` and `/model` command to switch models of the current provider
 - [ ] `:new` `/new` to create a new session
-- [ ] `:model` and `/model` command to switch models of the current provider
 - [ ] `:compact`` `/compact` to compact the session (remove the bloat - let the agent say what it wants to keep and discard the rest)
 - [ ] Add a permission system to allow agent to ask for permission some commands (e.g. rm)
 - [ ] Add a chat mode, where the agent doesn't have any tools
-- [ ] Add a :reasoning command to control the reasoning level
-- [ ] Add a :debug command to toggle debug mode
-- [ ] Add a :load command to load a session from a file
-  [ ] - Display the previous session ui / title in fzf to allow the user to select the session to load
+- [ ] `:reasoning` command to control the reasoning level
+- [ ] `:debug` command to toggle debug mode
+- [ ] `:load` command to load a session from a file
 - [ ] Add a title system (small llm call to generate a title for the session)
-- [ ] bind ctrol u / d to scroll up / down 1/2 a page
+- [ ] Auth (as now I need to auth using opencode lol)
+- [ ] First touch: proper way to add auth, and generate the config in ~/.harness/config.json
+
+**UI:**
+- [x] bind ctrol u / d to scroll up / down 1/2 a page
 - [ ] TUI: escape to cancel the last msg
 - [ ] TUI: a `!` to run a command and be able to happen in to the next message (the truncated output)
-- [x] keyboard shortcuts with ctrl+x y (for to copy the latest message to the clipboard)
-- [ ] Bind the scroll up / down keys to scroll the page up / down
-
+- [ ] TUI: Bind the scroll up / down keys to scroll the page up / down
+- [ ] TUI: markdown rendering
+- [ ] TUI: session selector
 
 
 Some tools ideas:
