@@ -2,6 +2,7 @@ package config
 
 import (
 	"latentdream/harness/internal/logging"
+	"latentdream/harness/internal/tracing"
 )
 
 const envPrefix = "HARNESS_"
@@ -10,6 +11,7 @@ const ConfigPathEnv = envPrefix + "CONFIG_PATH"
 type Config struct {
 	UserConfigPath string         `json:"userConfigPath"`
 	Logging        logging.Config `json:"logging"`
+	Tracing        tracing.Config `json:"tracing"`
 	Providers      []Provider     `json:"providers"`
 }
 

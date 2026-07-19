@@ -9,6 +9,9 @@
     "disableCaller": false,
     "disableStacktrace": false
   },
+  "tracing": {
+    "filePath": "~/.harness/logs/{sessionId}/{snapshot_id}.json"
+  },
   "providers": [
     {
       "name": "codex",

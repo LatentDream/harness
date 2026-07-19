@@ -38,7 +38,7 @@ func main() {
 	logging.ConfigureOrExitForSession(cfg.Logging, sessionID)
 	defer func() { _ = logging.Sync() }()
 
-	ctx = tracing.Init(ctx, tracing.LogRecorder())
+	ctx = tracing.Init(ctx, tracing.LogRecorder(cfg.Tracing.FilePath, sessionID))
 
 	aiProvider, err := provider.New(cfg.Providers)
 	if err != nil {

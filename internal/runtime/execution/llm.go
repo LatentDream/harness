@@ -36,7 +36,7 @@ func LLMCall(
 	}
 
 	var response provider.Response
-	callErr := WithStatus(callCtx, io, "inference", func() error {
+	callErr := WithStatus(callCtx, io, "working...", func() error {
 		var sendErr error
 		response, sendErr = aiProvider.Send(callCtx, request)
 		return sendErr

@@ -17,6 +17,7 @@ var ErrNoSnapshot = errors.New("trace contains no session snapshot")
 type Config struct {
 	Enabled              bool          `json:"enabled"`
 	Directory            string        `json:"directory"`
+	FilePath             string        `json:"filePath"`
 	FailurePolicy        FailurePolicy `json:"failurePolicy"`
 	RecordRaw            bool          `json:"recordRaw"`
 	EnvironmentAllowlist []string      `json:"environmentAllowlist"`

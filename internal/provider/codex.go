@@ -15,7 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"latentdream/harness/internal/logging"
 	"latentdream/harness/internal/session/llm"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -120,6 +123,12 @@ func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, 
 	if err != nil {
 		return Response{}, err
 	}
+
+	logging.Log(ctx).Debug("received codex response body",
+		zap.String("provider", configured.name),
+		zap.String("model", model),
+		zap.String("body", string(body)),
+	)
 
 	message, err := codexResponseMessage(body)
 	if err != nil {

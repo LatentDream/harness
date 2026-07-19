@@ -23,7 +23,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxToolRounds = 8
+const maxToolRounds = 20 // TODO: make configurable
 
 type Runtime struct {
 	id uuid.UUID

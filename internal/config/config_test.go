@@ -31,6 +31,9 @@ func TestLoadUsesEmbeddedDefault(t *testing.T) {
 	if config.Logging.FilePath != "~/.harness/logs/{sessionId}/{sessionId}.log" {
 		t.Fatalf("expected default session log file path, got %q", config.Logging.FilePath)
 	}
+	if config.Tracing.FilePath != "~/.harness/logs/{sessionId}/{snapshot_id}.json" {
+		t.Fatalf("expected default snapshot file path, got %q", config.Tracing.FilePath)
+	}
 	if len(config.Providers) != 1 {
 		t.Fatalf("expected one default provider, got %#v", config.Providers)
 	}
@@ -56,6 +59,7 @@ func TestConfigEnvNamesAreDerivedFromJSONTags(t *testing.T) {
 		{[]string{"Logging", "InitialFields"}, "HARNESS_LOGGING_INITIAL_FIELDS"},
 		{[]string{"Logging", "DisableCaller"}, "HARNESS_LOGGING_DISABLE_CALLER"},
 		{[]string{"Logging", "DisableStacktrace"}, "HARNESS_LOGGING_DISABLE_STACKTRACE"},
+		{[]string{"Tracing", "FilePath"}, "HARNESS_TRACING_FILE_PATH"},
 		{[]string{"Providers"}, "HARNESS_PROVIDERS"},
 	}
 

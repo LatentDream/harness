@@ -2,6 +2,13 @@ package tracing
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 
 	"latentdream/harness/internal/logging"
 
@@ -9,20 +16,32 @@ import (
 )
 
 type (
-	logRecorder struct{}
-	logRun      struct{}
-	logSpan     struct{}
+	logRecorder struct {
+		filePath  string
+		sessionID string
+	}
+	logRun struct {
+		filePath        string
+		currentSnapshot int
+		mu              sync.Mutex
+	}
+	logSpan struct{}
 )
 
-// LogRecorder returns a recorder that writes trace operations to the logger.
-func LogRecorder() Recorder {
-	return logRecorder{}
+const (
+	sessionIDPlaceholder  = "{sessionId}"
+	snapshotIDPlaceholder = "{snapshot_id}"
+)
+
+// LogRecorder returns a recorder that logs trace operations and persists snapshots.
+func LogRecorder(filePath, sessionID string) Recorder {
+	return logRecorder{filePath: filePath, sessionID: sessionID}
 }
 
-func (logRecorder) StartRun(ctx context.Context, metadata RunMeta) (context.Context, Run, error) {
+func (r logRecorder) StartRun(ctx context.Context, metadata RunMeta) (context.Context, Run, error) {
 	ctx = normalizedContext(ctx)
 	logging.Log(ctx).Debug("StartRun", zap.Any("metadata", metadata))
-	return ctx, logRun{}, nil
+	return ctx, &logRun{filePath: strings.ReplaceAll(r.filePath, sessionIDPlaceholder, r.sessionID)}, nil
 }
 
 func (logRun) Event(ctx context.Context, event Event) error {
@@ -36,10 +55,56 @@ func (logRun) StartSpan(ctx context.Context, span SpanStart) (context.Context, S
 	return ctx, logSpan{}, nil
 }
 
-func (logRun) Snapshot(ctx context.Context, state SessionState) error {
+func (l *logRun) Snapshot(ctx context.Context, state SessionState) error {
 	ctx = normalizedContext(ctx)
 	logging.Log(ctx).Debug("Snapshot", zap.Any("state", state))
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.currentSnapshot++
+	return saveSnapshot(ctx, l.filePath, l.currentSnapshot, state)
+}
+
+func saveSnapshot(ctx context.Context, pathTemplate string, snapshotID int, state SessionState) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(pathTemplate) == "" {
+		return fmt.Errorf("save snapshot %d: filePath is empty", snapshotID)
+	}
+
+	path := strings.ReplaceAll(pathTemplate, snapshotIDPlaceholder, strconv.Itoa(snapshotID))
+	path, err := expandSnapshotPath(path)
+	if err != nil {
+		return fmt.Errorf("save snapshot %d: %w", snapshotID, err)
+	}
+	contents, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal snapshot %d: %w", snapshotID, err)
+	}
+	contents = append(contents, '\n')
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create snapshot directory %q: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		return fmt.Errorf("write snapshot %q: %w", path, err)
+	}
 	return nil
+}
+
+func expandSnapshotPath(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, path[2:]), nil
 }
 
 func (logRun) Close(ctx context.Context, outcome RunOutcome) error {
