@@ -13,7 +13,6 @@ import (
 
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/provider"
-	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool/model"
@@ -29,7 +28,7 @@ func TestRunRecordsTraceLifecycle(t *testing.T) {
 	}}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	ctx := tracing.Init(context.Background(), recorder)
 	if err := runtime.Run(ctx); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
@@ -80,7 +79,7 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "  hello  "}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: "assistant", Content: "world"}}}}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
 	}
@@ -107,7 +106,7 @@ func TestRunEmitsProgressiveAssistantEventsWithoutDuplicateOutput(t *testing.T) 
 		chunks:    [][]string{{"hello", " world"}},
 	}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
 	}
@@ -154,7 +153,7 @@ func TestRunAbortsPartialAssistantOutputOnProviderError(t *testing.T) {
 		streamErrors: []error{errors.New("stream failed")},
 	}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to continue after provider error, got %v", err)
 	}
@@ -193,7 +192,7 @@ func TestRunPlanModeUsesReadOnlyToolsAndEphemeralInstruction(t *testing.T) {
 		{Message: llm.Message{Role: llm.RoleAssistant, Content: "the plan"}},
 	}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
 		t.Fatalf("expected plan turn to exit cleanly, got %v", err)
@@ -227,7 +226,7 @@ func TestRunTracesCommandSubmissionMode(t *testing.T) {
 		{text: "/exit"},
 	}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(&fakeProvider{}, userInput, userInput)
+	runtime := New(&fakeProvider{}, userInput, userInput, Options{})
 
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
 		t.Fatalf("run command: %v", err)
@@ -240,7 +239,7 @@ func TestRunTracesCommandSubmissionMode(t *testing.T) {
 
 func TestRunRejectsUnknownSubmissionMode(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "hello", mode: "unsafe"}}}
-	runtime := New(&fakeProvider{}, userInput, userInput)
+	runtime := New(&fakeProvider{}, userInput, userInput, Options{})
 
 	err := runtime.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), `unsupported submission mode "unsafe"`) {
@@ -255,7 +254,7 @@ func TestRunKeepsConversationHistory(t *testing.T) {
 		{Message: llm.Message{Role: "assistant", Content: "second"}},
 	}}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
 	}
@@ -306,7 +305,7 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	}}
 
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
 	}
@@ -351,7 +350,7 @@ func TestRunTracesToolFailureAndLetsModelRecover(t *testing.T) {
 		{Message: llm.Message{Role: llm.RoleAssistant, Content: "recovered"}},
 	}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	runtime.Tools = []model.Tool{failingTool{}}
 
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
@@ -377,7 +376,7 @@ func TestRunReturnsNilOnEOF(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{err: io.EOF}}}
 	aiProvider := &fakeProvider{}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected EOF to exit cleanly, got %v", err)
 	}
@@ -391,7 +390,7 @@ func TestRunReturnsCancellationWithoutWritingAnError(t *testing.T) {
 	aiProvider := &fakeProvider{errors: []error{context.Canceled}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	err := runtime.Run(tracing.Init(context.Background(), recorder))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
@@ -412,7 +411,7 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 	}
 
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
 		t.Fatalf("expected runtime to continue after provider error, got %v", err)
 	}
@@ -441,11 +440,64 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 	}
 }
 
+func TestRunCopiesLatestMessageWithoutProviderCall(t *testing.T) {
+	for _, commandText := range []string{"/copy", ":copy"} {
+		t.Run(commandText, func(t *testing.T) {
+			userInput := &scriptedInput{receives: []receiveResult{{text: "hello"}, {text: commandText}, {text: "/exit"}}}
+			aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "world"}}}}
+			clipboard := &fakeRuntimeClipboard{}
+
+			runtime := New(aiProvider, userInput, userInput, Options{Clipboard: clipboard})
+			if err := runtime.Run(context.Background()); err != nil {
+				t.Fatalf("expected runtime to exit cleanly, got %v", err)
+			}
+			if len(aiProvider.queries) != 1 {
+				t.Fatalf("expected only the original provider call, got %d", len(aiProvider.queries))
+			}
+			if clipboard.text != "world" {
+				t.Fatalf("expected latest response to be copied, got %q", clipboard.text)
+			}
+			expected := []string{"world", "copied latest message to clipboard"}
+			if !reflect.DeepEqual(userInput.responses, expected) {
+				t.Fatalf("unexpected responses: %#v", userInput.responses)
+			}
+		})
+	}
+}
+
+func TestLatestCopyableMessageSkipsUserMessages(t *testing.T) {
+	runtime := &Runtime{Session: session.Session{Conversation: []llm.Message{
+		{Role: llm.RoleAssistant, Content: "assistant response"},
+		{Role: llm.RoleUser, Content: "newer user message"},
+	}}}
+
+	message, ok := runtime.latestCopyableMessage()
+	if !ok || message != "assistant response" {
+		t.Fatalf("latest copyable message = %q, %v", message, ok)
+	}
+}
+
+func TestRunCopyHandlesNoMessage(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "/copy"}, {text: "/exit"}}}
+	clipboard := &fakeRuntimeClipboard{}
+
+	runtime := New(&fakeProvider{}, userInput, userInput, Options{Clipboard: clipboard})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected runtime to exit cleanly, got %v", err)
+	}
+	if clipboard.text != "" {
+		t.Fatalf("expected clipboard not to be called, got %q", clipboard.text)
+	}
+	if !reflect.DeepEqual(userInput.responses, []string{"no message to copy"}) {
+		t.Fatalf("unexpected responses: %#v", userInput.responses)
+	}
+}
+
 func TestRunHandlesUnknownCommandWithoutProviderCall(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "/unknown"}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to handle unknown command cleanly, got %v", err)
 	}
@@ -462,7 +514,7 @@ func TestRunWritesHelpWithoutProviderCall(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "/help"}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{}
 
-	runtime := New(aiProvider, userInput, userInput)
+	runtime := New(aiProvider, userInput, userInput, Options{})
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to handle help cleanly, got %v", err)
 	}
@@ -470,7 +522,8 @@ func TestRunWritesHelpWithoutProviderCall(t *testing.T) {
 	if len(aiProvider.queries) != 0 {
 		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
 	}
-	if !reflect.DeepEqual(userInput.responses, []string{command.DefaultRegistry().Help()}) {
+	expectedHelp := "Available commands:\n  :copy, /copy - copy latest message to clipboard\n  :q, /exit, /quit - exit harness\n  :help, /help - show available commands"
+	if !reflect.DeepEqual(userInput.responses, []string{expectedHelp}) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}
 }
@@ -700,4 +753,14 @@ func containsTraceEvent(events []tracing.Event, kind tracing.Kind) bool {
 		}
 	}
 	return false
+}
+
+type fakeRuntimeClipboard struct {
+	text string
+	err  error
+}
+
+func (f *fakeRuntimeClipboard) Copy(_ context.Context, text string) error {
+	f.text = text
+	return f.err
 }

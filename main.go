@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"latentdream/harness/internal/config"
+	"latentdream/harness/internal/environment/clipboard"
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/logging"
 	"latentdream/harness/internal/provider"
@@ -57,6 +58,7 @@ func run() int {
 
 	selection := aiProvider.Current()
 	commands := command.DefaultRegistry()
+	runtimeOptions := runtime.Options{Commands: commands, Clipboard: clipboard.NewSystem()}
 	if tui.IsInteractive(os.Stdin, os.Stdout) {
 		workingDirectory, _ := os.Getwd()
 		frontend, err := tui.New(os.Stdin, os.Stdout, os.Stderr, tui.Options{
@@ -69,12 +71,12 @@ func run() int {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize terminal UI: %v\n", err)
 			return 1
 		}
-		harness := runtime.NewWithCommands(aiProvider, frontend, frontend, commands)
+		harness := runtime.New(aiProvider, frontend, frontend, runtimeOptions)
 		err = frontend.Run(ctx, harness.Run)
 	} else {
 		frontend := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
 		_ = frontend.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
-		harness := runtime.NewWithCommands(aiProvider, frontend, frontend, commands)
+		harness := runtime.New(aiProvider, frontend, frontend, runtimeOptions)
 		err = harness.Run(ctx)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {

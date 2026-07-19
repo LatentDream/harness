@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -21,7 +22,7 @@ type Result struct {
 type Command interface {
 	Name() string
 	Mapping() []string
-	Execute(args []string) (Result, error)
+	Execute(context.Context, []string) (Result, error)
 }
 
 // Entry describes a command and the mappings that invoke it.
@@ -66,7 +67,7 @@ func (r *Registry) Register(cmd Command) {
 	}
 }
 
-func (r *Registry) Execute(input string) (Result, bool, error) {
+func (r *Registry) Execute(ctx context.Context, input string) (Result, bool, error) {
 	name, args := parse(input)
 	if name == "" {
 		return Result{}, false, nil
@@ -80,7 +81,7 @@ func (r *Registry) Execute(input string) (Result, bool, error) {
 		return Result{}, false, nil
 	}
 
-	result, err := cmd.Execute(args)
+	result, err := cmd.Execute(ctx, args)
 	return result, true, err
 }
 

@@ -1,5 +1,7 @@
 package command
 
+import "context"
+
 type help struct {
 	registry *Registry
 }
@@ -20,6 +22,6 @@ func (cmd *help) Description() string {
 	return "show available commands"
 }
 
-func (cmd *help) Execute(args []string) (Result, error) {
+func (cmd *help) Execute(_ context.Context, args []string) (Result, error) {
 	return Result{Output: cmd.registry.Help()}, nil
 }

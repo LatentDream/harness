@@ -1,5 +1,7 @@
 package command
 
+import "context"
+
 type exit struct{}
 
 func newExitCmd() Command {
@@ -18,6 +20,6 @@ func (cmd *exit) Description() string {
 	return "exit harness"
 }
 
-func (cmd *exit) Execute(args []string) (Result, error) {
+func (cmd *exit) Execute(_ context.Context, args []string) (Result, error) {
 	return Result{Action: ActionExit}, nil
 }

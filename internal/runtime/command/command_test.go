@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -10,7 +11,7 @@ func TestRegistryExecutesMappedCommand(t *testing.T) {
 	testCommand := &recordingCommand{}
 	registry := NewRegistry(testCommand)
 
-	result, handled, err := registry.Execute("  /test one two  ")
+	result, handled, err := registry.Execute(context.Background(), "  /test one two  ")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -26,7 +27,7 @@ func TestRegistryExecutesMappedCommand(t *testing.T) {
 }
 
 func TestRegistryIgnoresRegularInput(t *testing.T) {
-	result, handled, err := DefaultRegistry().Execute("hello there")
+	result, handled, err := DefaultRegistry().Execute(context.Background(), "hello there")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -36,7 +37,7 @@ func TestRegistryIgnoresRegularInput(t *testing.T) {
 }
 
 func TestRegistryHandlesUnknownCommand(t *testing.T) {
-	result, handled, err := DefaultRegistry().Execute("/missing arg")
+	result, handled, err := DefaultRegistry().Execute(context.Background(), "/missing arg")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -50,7 +51,7 @@ func TestRegistryHandlesUnknownCommand(t *testing.T) {
 
 func TestRegistryExecutesDefaultExitCommand(t *testing.T) {
 	for _, input := range []string{":q", "/exit", "/quit"} {
-		result, handled, err := DefaultRegistry().Execute(input)
+		result, handled, err := DefaultRegistry().Execute(context.Background(), input)
 		if err != nil {
 			t.Fatalf("expected no error for %q, got %v", input, err)
 		}
@@ -65,7 +66,7 @@ func TestRegistryExecutesDefaultExitCommand(t *testing.T) {
 
 func TestRegistryExecutesDefaultHelpCommand(t *testing.T) {
 	for _, input := range []string{":help", "/help"} {
-		result, handled, err := DefaultRegistry().Execute(input)
+		result, handled, err := DefaultRegistry().Execute(context.Background(), input)
 		if err != nil {
 			t.Fatalf("expected no error for %q, got %v", input, err)
 		}
@@ -113,7 +114,7 @@ func TestRegistryReturnsCommandErrors(t *testing.T) {
 	expectedErr := errors.New("boom")
 	registry := NewRegistry(&recordingCommand{err: expectedErr})
 
-	_, handled, err := registry.Execute("/test")
+	_, handled, err := registry.Execute(context.Background(), "/test")
 	if !handled {
 		t.Fatal("expected command to be handled")
 	}
@@ -135,7 +136,7 @@ func (cmd *recordingCommand) Mapping() []string {
 	return []string{"/test"}
 }
 
-func (cmd *recordingCommand) Execute(args []string) (Result, error) {
+func (cmd *recordingCommand) Execute(_ context.Context, args []string) (Result, error) {
 	cmd.args = args
 	return Result{Output: "ok"}, cmd.err
 }
@@ -158,6 +159,6 @@ func (cmd *describedCommand) Description() string {
 	return cmd.description
 }
 
-func (cmd *describedCommand) Execute([]string) (Result, error) {
+func (cmd *describedCommand) Execute(context.Context, []string) (Result, error) {
 	return Result{}, nil
 }

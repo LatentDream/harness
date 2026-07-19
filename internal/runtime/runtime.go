@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"latentdream/harness/internal/environment"
+	"latentdream/harness/internal/environment/clipboard"
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/orchestrator"
 	"latentdream/harness/internal/provider"
@@ -34,24 +35,35 @@ type Runtime struct {
 	Environment environment.Environment
 	Session     session.Session
 
-	receiver input.Receiver
-	output   input.Sink
-	commands *command.Registry
+	receiver  input.Receiver
+	output    input.Sink
+	commands  *command.Registry
+	clipboard command.Clipboard
 }
 
-func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink) *Runtime {
-	return NewWithCommands(aiProvider, receiver, output, command.DefaultRegistry())
+type Options struct {
+	Commands  *command.Registry
+	Clipboard command.Clipboard
 }
 
-func NewWithCommands(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, commands *command.Registry) *Runtime {
-	return &Runtime{
-		id:       uuid.New(),
-		Provider: aiProvider,
-		Tools:    tool.NewDefault(),
-		receiver: receiver,
-		output:   output,
-		commands: commands,
+func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, options Options) *Runtime {
+	if options.Commands == nil {
+		options.Commands = command.DefaultRegistry()
 	}
+	if options.Clipboard == nil {
+		options.Clipboard = clipboard.NewSystem()
+	}
+	r := &Runtime{
+		id:        uuid.New(),
+		Provider:  aiProvider,
+		Tools:     tool.NewDefault(),
+		receiver:  receiver,
+		output:    output,
+		commands:  options.Commands,
+		clipboard: options.Clipboard,
+	}
+	r.commands.Register(command.NewCopyCmd(r.latestCopyableMessage, r.clipboard))
+	return r
 }
 
 func (r *Runtime) Run(ctx context.Context) (runErr error) {
@@ -137,7 +149,7 @@ func (r *Runtime) handleCommand(ctx context.Context, text string, commandText st
 		return command.ActionContinue, fmt.Errorf("start command trace: %w", err)
 	}
 
-	result, handled, commandErr := r.commands.Execute(commandText)
+	result, handled, commandErr := r.commands.Execute(ctx, commandText)
 	if !handled {
 		span.End(nil, nil)
 		return command.ActionContinue, span.Checkpoint()
@@ -252,14 +264,25 @@ func (r *Runtime) initialize() error {
 	if r.output == nil {
 		return errors.New("runtime: output sink is required")
 	}
-	if r.commands == nil {
-		r.commands = command.DefaultRegistry()
-	}
 	if r.Tools == nil {
 		r.Tools = tool.NewDefault()
 	}
 	r.Session.Init()
 	return nil
+}
+
+func (r *Runtime) latestCopyableMessage() (string, bool) {
+	for index := len(r.Session.Conversation) - 1; index >= 0; index-- {
+		message := r.Session.Conversation[index]
+		if message.Role != llm.RoleAssistant {
+			continue
+		}
+		if strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		return message.Content, true
+	}
+	return "", false
 }
 
 func (r *Runtime) isCommand(text string) bool {
