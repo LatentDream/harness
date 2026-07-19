@@ -1,0 +1,12 @@
+Execute a bash command.
+
+Use this tool for build commands, tests, formatting, git inspection, and other shell operations.
+The command runs through /bin/bash -lc.
+
+Parameters:
+- command: required bash command string.
+- workingDirectory: optional absolute directory to run in. Defaults to the current working directory.
+- timeoutSeconds: optional positive timeout in seconds. Defaults to 30 and is capped at 120.
+
+Output includes the command, working directory, exit code, stdout, and stderr.
+Non-zero command exits are returned as tool output rather than tool errors.
