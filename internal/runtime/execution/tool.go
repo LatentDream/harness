@@ -11,7 +11,7 @@ import (
 	"latentdream/harness/internal/tracing"
 )
 
-func ToolCall(ctx context.Context, io input.IO, toolsByName map[string]model.Tool, call llm.ToolCall, turnID string) (llm.Message, error) {
+func ToolCall(ctx context.Context, sink input.Sink, toolsByName map[string]model.Tool, call llm.ToolCall, turnID string) (llm.Message, error) {
 	spanCtx, span, err := tracing.BeginSpan(ctx, tracing.SpanStart{
 		Kind:    tracing.SpanToolCall,
 		TurnID:  turnID,
@@ -28,7 +28,7 @@ func ToolCall(ctx context.Context, io input.IO, toolsByName map[string]model.Too
 		status = item.Status(call.Arguments)
 	}
 	var executionErr error
-	statusErr := WithStatus(spanCtx, io, status, func() error {
+	statusErr := WithStatus(spanCtx, sink, input.Event{TurnID: turnID, Text: status}, func() error {
 		if item == nil {
 			executionErr = fmt.Errorf("tool %q is not available", call.Name)
 			result = fmt.Sprintf("error: tool %q is not available", call.Name)

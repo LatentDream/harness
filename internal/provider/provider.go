@@ -34,7 +34,13 @@ type Provider interface {
 	Current() Selection
 	Available() []Selection
 	Use(providerName string, modelName string) error
-	Send(ctx context.Context, request llm.Request) (Response, error)
+	Send(ctx context.Context, request llm.Request, stream StreamHandler) (Response, error)
+}
+
+type StreamHandler func(StreamEvent) error
+
+type StreamEvent struct {
+	TextDelta string `json:"text_delta,omitempty"`
 }
 
 type Selection struct {
@@ -156,7 +162,7 @@ func (m *manager) Use(providerName string, modelName string) error {
 	return fmt.Errorf("provider %q is not configured or not enabled", providerName)
 }
 
-func (m *manager) Send(ctx context.Context, request llm.Request) (Response, error) {
+func (m *manager) Send(ctx context.Context, request llm.Request, stream StreamHandler) (Response, error) {
 	if err := validateRequest(request); err != nil {
 		return Response{}, err
 	}
@@ -168,11 +174,11 @@ func (m *manager) Send(ctx context.Context, request llm.Request) (Response, erro
 
 	switch configured.kind {
 	case providerKindOpenAICompatible:
-		return m.sendOpenAICompatible(ctx, configured, model, request)
+		return m.sendOpenAICompatible(ctx, configured, model, request, stream)
 	case providerKindAnthropic:
-		return m.sendAnthropic(ctx, configured, model, request)
+		return m.sendAnthropic(ctx, configured, model, request, stream)
 	case providerKindCodex:
-		return m.sendCodex(ctx, configured, model, request)
+		return m.sendCodex(ctx, configured, model, request, stream)
 	default:
 		return Response{}, fmt.Errorf("provider %q has unsupported type %q", configured.name, configured.kind)
 	}
@@ -401,7 +407,7 @@ type openAIToolCallFunction struct {
 	Arguments string `json:"arguments"`
 }
 
-func (m *manager) sendOpenAICompatible(ctx context.Context, configured configuredProvider, model string, request llm.Request) (Response, error) {
+func (m *manager) sendOpenAICompatible(ctx context.Context, configured configuredProvider, model string, request llm.Request, stream StreamHandler) (Response, error) {
 	payload := openAIChatRequest{
 		Model:       model,
 		Messages:    openAIChatMessages(request.Messages),
@@ -431,6 +437,9 @@ func (m *manager) sendOpenAICompatible(ctx context.Context, configured configure
 	message := messageFromOpenAI(decoded.Choices[0].Message)
 	if message.Role == "" {
 		message.Role = "assistant"
+	}
+	if err := emitText(stream, message.Content); err != nil {
+		return Response{}, err
 	}
 
 	return Response{Provider: configured.name, Model: model, Message: message, Raw: body}, nil
@@ -577,7 +586,7 @@ type anthropicResponseContent struct {
 	Input json.RawMessage `json:"input"`
 }
 
-func (m *manager) sendAnthropic(ctx context.Context, configured configuredProvider, model string, request llm.Request) (Response, error) {
+func (m *manager) sendAnthropic(ctx context.Context, configured configuredProvider, model string, request llm.Request, stream StreamHandler) (Response, error) {
 	messages, system := anthropicMessages(request.Messages)
 	if len(messages) == 0 {
 		return Response{}, errors.New("anthropic query must include at least one non-system message")
@@ -619,8 +628,21 @@ func (m *manager) sendAnthropic(ctx context.Context, configured configuredProvid
 	if message.Content == "" && len(message.ToolCalls) == 0 {
 		return Response{}, fmt.Errorf("provider %q returned no content", configured.name)
 	}
+	if err := emitText(stream, message.Content); err != nil {
+		return Response{}, err
+	}
 
 	return Response{Provider: configured.name, Model: model, Message: message, Raw: body}, nil
+}
+
+func emitText(stream StreamHandler, text string) error {
+	if stream == nil || text == "" {
+		return nil
+	}
+	if err := stream(StreamEvent{TextDelta: text}); err != nil {
+		return fmt.Errorf("provider stream callback: %w", err)
+	}
+	return nil
 }
 
 func anthropicMessages(messages []llm.Message) ([]anthropicRequestMessage, string) {
@@ -738,6 +760,16 @@ func anthropicHeaders(configured configuredProvider) (map[string]string, error) 
 }
 
 func (m *manager) postJSON(ctx context.Context, configured configuredProvider, path string, payload any, headers map[string]string) ([]byte, error) {
+	resp, err := m.postJSONResponse(ctx, configured, path, payload, headers)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return readProviderResponse(configured, resp)
+}
+
+func (m *manager) postJSONResponse(ctx context.Context, configured configuredProvider, path string, payload any, headers map[string]string) (*http.Response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode provider %q request: %w", configured.name, err)
@@ -756,8 +788,10 @@ func (m *manager) postJSON(ctx context.Context, configured configuredProvider, p
 	if err != nil {
 		return nil, fmt.Errorf("send provider %q request: %w", configured.name, err)
 	}
-	defer resp.Body.Close()
+	return resp, nil
+}
 
+func readProviderResponse(configured configuredProvider, resp *http.Response) ([]byte, error) {
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read provider %q response: %w", configured.name, err)

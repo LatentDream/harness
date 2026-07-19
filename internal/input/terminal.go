@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 )
 
 const (
@@ -15,6 +16,7 @@ const (
 )
 
 type Terminal struct {
+	mu           sync.Mutex
 	reader       *bufio.Reader
 	readerCloser io.Closer
 	writer       io.Writer
@@ -22,6 +24,7 @@ type Terminal struct {
 	prompt       string
 	status       string
 	visible      bool
+	streaming    bool
 }
 
 func NewTerminal(reader io.Reader, writer io.Writer, errWriter io.Writer) *Terminal {
@@ -39,12 +42,16 @@ func (t *Terminal) Receive(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	t.mu.Lock()
 	if err := t.hideStatus(); err != nil {
+		t.mu.Unlock()
 		return "", err
 	}
 	if _, err := fmt.Fprint(t.writer, t.prompt); err != nil {
+		t.mu.Unlock()
 		return "", err
 	}
+	t.mu.Unlock()
 
 	stopCancellation := func() bool { return true }
 	if t.readerCloser != nil {
@@ -68,9 +75,50 @@ func (t *Terminal) Receive(ctx context.Context) (string, error) {
 	return trimLineEnding(line), nil
 }
 
+func (t *Terminal) Emit(_ context.Context, event Event) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	switch event.Kind {
+	case EventOutput:
+		return t.writeLine(event.Stream, event.Text)
+	case EventStatus:
+		t.status = event.Text
+		return t.redrawStatus()
+	case EventAssistantStarted:
+		if t.streaming {
+			return nil
+		}
+		if err := t.hideStatus(); err != nil {
+			return err
+		}
+		t.streaming = true
+		return nil
+	case EventAssistantDelta:
+		if !t.streaming {
+			if err := t.hideStatus(); err != nil {
+				return err
+			}
+			t.streaming = true
+		}
+		_, err := fmt.Fprint(t.writer, event.Text)
+		return err
+	case EventAssistantCompleted, EventAssistantAborted:
+		if !t.streaming {
+			return nil
+		}
+		if _, err := fmt.Fprintln(t.writer); err != nil {
+			return err
+		}
+		t.streaming = false
+		return t.showStatus()
+	default:
+		return fmt.Errorf("unsupported input event kind %q", event.Kind)
+	}
+}
+
 func (t *Terminal) SetStatus(status string) error {
-	t.status = status
-	return t.redrawStatus()
+	return t.Emit(context.Background(), Event{Kind: EventStatus, Text: status})
 }
 
 func (t *Terminal) SetStatusf(format string, args ...any) error {
@@ -78,13 +126,7 @@ func (t *Terminal) SetStatusf(format string, args ...any) error {
 }
 
 func (t *Terminal) Write(response string) error {
-	if err := t.hideStatus(); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(t.writer, response); err != nil {
-		return err
-	}
-	return t.showStatus()
+	return t.Emit(context.Background(), Event{Kind: EventOutput, Stream: StreamStdout, Text: response})
 }
 
 func (t *Terminal) Writef(format string, args ...any) error {
@@ -92,10 +134,18 @@ func (t *Terminal) Writef(format string, args ...any) error {
 }
 
 func (t *Terminal) WriteErr(response string) error {
+	return t.Emit(context.Background(), Event{Kind: EventOutput, Stream: StreamStderr, Text: response})
+}
+
+func (t *Terminal) writeLine(stream Stream, response string) error {
 	if err := t.hideStatus(); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(t.errWriter, response); err != nil {
+	writer := t.writer
+	if stream == StreamStderr {
+		writer = t.errWriter
+	}
+	if _, err := fmt.Fprintln(writer, response); err != nil {
 		return err
 	}
 	return t.showStatus()

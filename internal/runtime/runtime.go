@@ -34,16 +34,18 @@ type Runtime struct {
 	Environment environment.Environment
 	Session     session.Session
 
-	input    input.IO
+	receiver input.Receiver
+	output   input.Sink
 	commands *command.Registry
 }
 
-func New(aiProvider provider.Provider, userInput input.IO) *Runtime {
+func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink) *Runtime {
 	return &Runtime{
 		id:       uuid.New(),
 		Provider: aiProvider,
 		Tools:    tool.NewDefault(),
-		input:    userInput,
+		receiver: receiver,
+		output:   output,
 		commands: command.DefaultRegistry(),
 	}
 }
@@ -79,7 +81,7 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) error {
 		default:
 		}
 
-		text, err := r.input.Receive(ctx)
+		text, err := r.receiver.Receive(ctx)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			trace.SetReason(tracing.EndReasonCancelled)
 			return err
@@ -90,7 +92,7 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) error {
 		}
 		if err != nil {
 			operationErr := fmt.Errorf("receive input: %w", err)
-			return errors.Join(operationErr, execution.Write(ctx, r.input, "stderr", operationErr.Error()), tracing.Checkpoint(ctx))
+			return errors.Join(operationErr, execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error()), tracing.Checkpoint(ctx))
 		}
 
 		commandText := strings.TrimSpace(text)
@@ -132,14 +134,14 @@ func (r *Runtime) handleCommand(ctx context.Context, text string, commandText st
 	}
 	if commandErr != nil {
 		operationErr := fmt.Errorf("execute command: %w", commandErr)
-		writeErr := execution.Write(ctx, r.input, "stderr", operationErr.Error())
+		writeErr := execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error())
 		span.End(operationErr, nil)
 		return command.ActionContinue, errors.Join(operationErr, writeErr, span.Checkpoint())
 	}
 
 	var writeErr error
 	if result.Output != "" {
-		writeErr = execution.Write(ctx, r.input, "stdout", result.Output)
+		writeErr = execution.Write(ctx, r.output, input.StreamStdout, result.Output)
 	}
 	span.End(writeErr, result)
 	return result.Action, errors.Join(writeErr, span.Checkpoint())
@@ -162,7 +164,9 @@ func (r *Runtime) handleTurn(ctx context.Context, text string) error {
 		turn.Rollback(rollbackIndex, r.sessionState())
 		var writeErr error
 		if !errors.Is(inferenceErr, context.Canceled) && !errors.Is(inferenceErr, context.DeadlineExceeded) {
-			writeErr = execution.Write(ctx, r.input, "stdout", "error: "+inferenceErr.Error())
+			writeErr = execution.Emit(ctx, r.output, input.Event{
+				Kind: input.EventOutput, TurnID: turnID, Stream: input.StreamStdout, Text: "error: " + inferenceErr.Error(),
+			})
 		}
 		turn.End(inferenceErr, "", r.sessionState())
 		traceErr := turn.Checkpoint()
@@ -175,9 +179,8 @@ func (r *Runtime) handleTurn(ctx context.Context, text string) error {
 		return nil
 	}
 
-	writeErr := execution.Write(ctx, r.input, "stdout", response)
-	turn.End(writeErr, response, r.sessionState())
-	return errors.Join(writeErr, turn.Checkpoint())
+	turn.End(nil, response, r.sessionState())
+	return turn.Checkpoint()
 }
 
 func (r *Runtime) inference(ctx context.Context, turnID string) (string, error) {
@@ -185,7 +188,7 @@ func (r *Runtime) inference(ctx context.Context, turnID string) (string, error) 
 	toolsByName := tool.ByName(r.Tools)
 
 	for round := 0; round < maxToolRounds; round++ {
-		response, err := execution.LLMCall(ctx, r.input, r.Provider, llm.Request{
+		response, err := execution.LLMCall(ctx, r.output, r.Provider, llm.Request{
 			Messages: r.Session.Conversation,
 			Tools:    definitions,
 		}, round+1, turnID)
@@ -199,7 +202,7 @@ func (r *Runtime) inference(ctx context.Context, turnID string) (string, error) 
 			return message.Content, nil
 		}
 		for _, call := range message.ToolCalls {
-			toolMessage, err := execution.ToolCall(ctx, r.input, toolsByName, call, turnID)
+			toolMessage, err := execution.ToolCall(ctx, r.output, toolsByName, call, turnID)
 			if err != nil {
 				return "", err
 			}
@@ -214,8 +217,11 @@ func (r *Runtime) initialize() error {
 	if r.Provider == nil {
 		return errors.New("runtime: provider is required")
 	}
-	if r.input == nil {
-		return errors.New("runtime: input is required")
+	if r.receiver == nil {
+		return errors.New("runtime: input receiver is required")
+	}
+	if r.output == nil {
+		return errors.New("runtime: output sink is required")
 	}
 	if r.commands == nil {
 		r.commands = command.DefaultRegistry()

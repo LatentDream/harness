@@ -160,9 +160,13 @@ func TestSendOpenAICompatible(t *testing.T) {
 		t.Fatalf("expected provider to initialize, got %v", err)
 	}
 
+	var streamed []StreamEvent
 	response, err := provider.Send(context.Background(), llm.Request{
 		Messages:  []llm.Message{{Role: "user", Content: "hello"}},
 		MaxTokens: 42,
+	}, func(event StreamEvent) error {
+		streamed = append(streamed, event)
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
@@ -172,6 +176,9 @@ func TestSendOpenAICompatible(t *testing.T) {
 	}
 	if !reflect.DeepEqual(response.Message, llm.Message{Role: "assistant", Content: "world"}) {
 		t.Fatalf("unexpected response message: %#v", response.Message)
+	}
+	if !reflect.DeepEqual(streamed, []StreamEvent{{TextDelta: "world"}}) {
+		t.Fatalf("unexpected stream events: %#v", streamed)
 	}
 }
 
@@ -223,7 +230,7 @@ func TestSendOpenAICompatibleHandlesToolCalls(t *testing.T) {
 	response, err := provider.Send(context.Background(), llm.Request{
 		Messages: []llm.Message{{Role: "user", Content: "read it"}},
 		Tools:    []llm.ToolDefinition{readDefinitionForTest()},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}
@@ -254,7 +261,7 @@ func TestSendReturnsErrorWhenAuthEnvVarIsMissing(t *testing.T) {
 		t.Fatalf("expected provider to initialize, got %v", err)
 	}
 
-	_, err = provider.Send(context.Background(), llm.Request{Messages: []llm.Message{{Role: "user", Content: "hello"}}})
+	_, err = provider.Send(context.Background(), llm.Request{Messages: []llm.Message{{Role: "user", Content: "hello"}}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "TEST_MISSING_OPENAI_KEY") {
 		t.Fatalf("expected missing auth env var error, got %v", err)
 	}
@@ -318,15 +325,22 @@ func TestSendAnthropic(t *testing.T) {
 		t.Fatalf("expected provider to initialize, got %v", err)
 	}
 
+	var streamed []StreamEvent
 	response, err := provider.Send(context.Background(), llm.Request{Messages: []llm.Message{
 		{Role: "system", Content: "be concise"},
 		{Role: "user", Content: "hello"},
-	}})
+	}}, func(event StreamEvent) error {
+		streamed = append(streamed, event)
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}
 	if !reflect.DeepEqual(response.Message, llm.Message{Role: "assistant", Content: "hello back"}) {
 		t.Fatalf("unexpected response message: %#v", response.Message)
+	}
+	if !reflect.DeepEqual(streamed, []StreamEvent{{TextDelta: "hello back"}}) {
+		t.Fatalf("unexpected stream events: %#v", streamed)
 	}
 }
 
@@ -369,7 +383,7 @@ func TestSendAnthropicHandlesToolCalls(t *testing.T) {
 	response, err := provider.Send(context.Background(), llm.Request{
 		Messages: []llm.Message{{Role: "user", Content: "read it"}},
 		Tools:    []llm.ToolDefinition{readDefinitionForTest()},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}

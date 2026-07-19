@@ -11,24 +11,19 @@ func UserInput(ctx context.Context, turnID string, text string) {
 	tracing.UserInput(ctx, turnID, text)
 }
 
-// TODO: I don't like this, we should call input/ui/io directly, but we need tracing on it. TBD
-func Write(ctx context.Context, io input.IO, stream string, text string) error {
-	var err error
-	if stream == "stderr" {
-		err = io.WriteErr(text)
-	} else {
-		err = io.Write(text)
-	}
-	if err != nil {
+func Emit(ctx context.Context, sink input.Sink, event input.Event) error {
+	if err := sink.Emit(ctx, event); err != nil {
 		return err
 	}
 
 	tracing.Record(ctx, tracing.Event{
-		Kind: tracing.KindOutput,
-		Payload: struct {
-			Stream string `json:"stream"`
-			Text   string `json:"text"`
-		}{Stream: stream, Text: text},
+		Kind:    tracing.KindOutput,
+		TurnID:  event.TurnID,
+		Payload: event,
 	})
 	return nil
+}
+
+func Write(ctx context.Context, sink input.Sink, stream input.Stream, text string) error {
+	return Emit(ctx, sink, input.Event{Kind: input.EventOutput, Stream: stream, Text: text})
 }

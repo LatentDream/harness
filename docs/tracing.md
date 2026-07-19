@@ -35,7 +35,7 @@ and tool results rather than silently performing live work.
 
 ### Execution
 
-- Commands and user-visible output.
+- Commands and user-visible output, including ordered assistant text deltas.
 - Normalized LLM requests, responses, failures, timing, and available usage.
 - Tool arguments, results, execution failures, and timing.
 - Explicit agent decisions or provider-supplied reasoning summaries.
@@ -171,6 +171,14 @@ Initial event kinds are:
 - `session.rollback` and `session.snapshot`
 - `artifact.observed`
 - `io.output` and `error`
+
+`io.output` payloads use the structured frontend event schema. Assistant output
+is recorded as `assistant.started`, one or more `assistant.delta` events, and
+`assistant.completed` or `assistant.aborted`. These events carry the turn ID and
+LLM round so a terminal or server can reconstruct concurrent presentation
+lifecycles. Status changes and complete stdout or stderr records use the same
+schema. Events are recorded only after the frontend accepts them; the aggregate
+`assistant.message` event remains the canonical conversation value.
 
 Paired start and end events preserve incomplete operations when a process exits
 unexpectedly. Sequence numbers describe commit order in the trace, while span

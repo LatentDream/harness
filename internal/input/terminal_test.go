@@ -164,3 +164,50 @@ func TestTerminalReceiveClearsStatusBeforePrompt(t *testing.T) {
 		t.Fatalf("expected status to clear before prompt, got %q", output.String())
 	}
 }
+
+func TestTerminalStreamsAssistantResponseOnOneLine(t *testing.T) {
+	var output bytes.Buffer
+	terminal := NewTerminal(strings.NewReader(""), &output, io.Discard)
+	ctx := context.Background()
+
+	if err := terminal.Emit(ctx, Event{Kind: EventStatus, Text: "working..."}); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	for _, event := range []Event{
+		{Kind: EventAssistantStarted, Stream: StreamStdout},
+		{Kind: EventAssistantDelta, Stream: StreamStdout, Text: "hello"},
+		{Kind: EventAssistantDelta, Stream: StreamStdout, Text: " world"},
+		{Kind: EventStatus},
+		{Kind: EventAssistantCompleted, Stream: StreamStdout},
+	} {
+		if err := terminal.Emit(ctx, event); err != nil {
+			t.Fatalf("emit %#v: %v", event, err)
+		}
+	}
+
+	want := clearStatusLine + "working..." + clearStatusLine + "hello world\n"
+	if output.String() != want {
+		t.Fatalf("expected progressive response, got %q", output.String())
+	}
+}
+
+func TestTerminalAbortsPartialAssistantResponseWithNewline(t *testing.T) {
+	var output bytes.Buffer
+	terminal := NewTerminal(strings.NewReader(""), &output, io.Discard)
+	ctx := context.Background()
+
+	for _, event := range []Event{
+		{Kind: EventAssistantStarted, Stream: StreamStdout},
+		{Kind: EventAssistantDelta, Stream: StreamStdout, Text: "partial"},
+		{Kind: EventAssistantAborted, Stream: StreamStdout},
+		{Kind: EventOutput, Stream: StreamStdout, Text: "error: failed"},
+	} {
+		if err := terminal.Emit(ctx, event); err != nil {
+			t.Fatalf("emit %#v: %v", event, err)
+		}
+	}
+
+	if output.String() != "partial\nerror: failed\n" {
+		t.Fatalf("expected partial response to be finalized, got %q", output.String())
+	}
+}

@@ -49,7 +49,7 @@ func main() {
 	selection := aiProvider.Current()
 	ui.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
 
-	harness := runtime.New(aiProvider, ui)
+	harness := runtime.New(aiProvider, ui, ui)
 	if err := harness.Run(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return

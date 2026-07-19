@@ -9,32 +9,23 @@ import (
 	"latentdream/harness/internal/tracing"
 )
 
-func WithStatus(ctx context.Context, io input.IO, status string, run func() error) error {
-	status = strings.TrimSpace(status)
-	if status == "" {
+func WithStatus(ctx context.Context, sink input.Sink, status input.Event, run func() error) error {
+	status.Text = strings.TrimSpace(status.Text)
+	if status.Text == "" {
 		return run()
 	}
+	status.Kind = input.EventStatus
 
-	if err := io.SetStatus(status); err != nil {
+	if err := Emit(ctx, sink, status); err != nil {
 		return err
 	}
-	recordStatus(ctx, status)
+	clear := status
+	clear.Text = ""
 	if traceErr := tracing.Checkpoint(ctx); traceErr != nil {
-		return errors.Join(traceErr, io.SetStatus(""))
+		return errors.Join(traceErr, Emit(ctx, sink, clear))
 	}
 
 	runErr := run()
-	clearErr := io.SetStatus("")
-	recordStatus(ctx, "")
+	clearErr := Emit(ctx, sink, clear)
 	return errors.Join(runErr, clearErr)
-}
-
-func recordStatus(ctx context.Context, status string) {
-	tracing.Record(ctx, tracing.Event{
-		Kind: tracing.KindOutput,
-		Payload: struct {
-			Stream string `json:"stream"`
-			Text   string `json:"text"`
-		}{Stream: "status", Text: status},
-	})
 }

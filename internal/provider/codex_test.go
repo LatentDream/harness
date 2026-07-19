@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -186,12 +187,100 @@ func TestSendCodexUsesOpencodeAuthFile(t *testing.T) {
 			{Role: "assistant", Content: "previous"},
 		},
 		MaxTokens: 128,
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}
 	if response.Message.Role != "assistant" || response.Message.Content != "codex response" || len(response.Message.ToolCalls) != 0 {
 		t.Fatalf("unexpected response message: %#v", response.Message)
+	}
+}
+
+func TestSendCodexStreamsBeforeResponseCompletesAndAggregatesCompletion(t *testing.T) {
+	t.Setenv("TEST_CODEX_KEY", "secret-token")
+
+	serverFinished := make(chan struct{})
+	releaseServer := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.output_text.delta\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
+		w.(http.Flusher).Flush()
+		<-releaseServer
+		_, _ = w.Write([]byte("event: response.completed\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello world\"}]},{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read\",\"arguments\":\"{\\\"filePath\\\":\\\"/tmp/sample.txt\\\"}\"}]}}\n\n"))
+		close(serverFinished)
+	}))
+	defer server.Close()
+
+	provider, err := New([]config.Provider{{
+		Name:            "codex",
+		Type:            "codex",
+		BaseURL:         server.URL,
+		AuthTokenEnvVar: "TEST_CODEX_KEY",
+		Enabled:         true,
+	}})
+	if err != nil {
+		t.Fatalf("initialize codex provider: %v", err)
+	}
+
+	var events []StreamEvent
+	response, err := provider.Send(context.Background(), llm.Request{
+		Messages: []llm.Message{{Role: "user", Content: "hello"}},
+	}, func(event StreamEvent) error {
+		select {
+		case <-serverFinished:
+			t.Fatal("stream callback ran after server finished")
+		default:
+		}
+		events = append(events, event)
+		close(releaseServer)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("send codex request: %v", err)
+	}
+	if len(events) != 1 || events[0].TextDelta != "hello" {
+		t.Fatalf("unexpected stream events: %#v", events)
+	}
+	if response.Message.Content != "hello world" || len(response.Message.ToolCalls) != 1 {
+		t.Fatalf("unexpected aggregate message: %#v", response.Message)
+	}
+	call := response.Message.ToolCalls[0]
+	if call.ID != "call_1" || call.Name != "read" || string(call.Arguments) != `{"filePath":"/tmp/sample.txt"}` {
+		t.Fatalf("unexpected aggregate tool call: %#v", call)
+	}
+	if !strings.Contains(string(response.Raw), "response.output_text.delta") || !strings.Contains(string(response.Raw), "response.completed") {
+		t.Fatalf("expected raw SSE response, got %q", response.Raw)
+	}
+}
+
+func TestSendCodexReturnsStreamCallbackError(t *testing.T) {
+	t.Setenv("TEST_CODEX_KEY", "secret-token")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n"))
+	}))
+	defer server.Close()
+
+	provider, err := New([]config.Provider{{
+		Name:            "codex",
+		Type:            "codex",
+		BaseURL:         server.URL,
+		AuthTokenEnvVar: "TEST_CODEX_KEY",
+		Enabled:         true,
+	}})
+	if err != nil {
+		t.Fatalf("initialize codex provider: %v", err)
+	}
+
+	callbackErr := errors.New("stop streaming")
+	_, err = provider.Send(context.Background(), llm.Request{
+		Messages: []llm.Message{{Role: "user", Content: "hello"}},
+	}, func(StreamEvent) error { return callbackErr })
+	if !errors.Is(err, callbackErr) {
+		t.Fatalf("expected callback error, got %v", err)
 	}
 }
 
@@ -264,7 +353,7 @@ func TestSendCodexRefreshesExpiredOpencodeAuth(t *testing.T) {
 		t.Fatalf("expected codex provider to initialize, got %v", err)
 	}
 
-	response, err := provider.Send(context.Background(), llm.Request{Messages: []llm.Message{{Role: "user", Content: "hello"}}})
+	response, err := provider.Send(context.Background(), llm.Request{Messages: []llm.Message{{Role: "user", Content: "hello"}}}, nil)
 	if err != nil {
 		t.Fatalf("expected send to succeed, got %v", err)
 	}

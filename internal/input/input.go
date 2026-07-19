@@ -2,12 +2,36 @@ package input
 
 import "context"
 
-type IO interface {
+type Receiver interface {
 	Receive(context.Context) (string, error)
-	SetStatus(string) error
-	SetStatusf(string, ...any) error
-	Write(string) error
-	Writef(string, ...any) error
-	WriteErr(string) error
-	WriteErrf(string, ...any) error
+}
+
+type Sink interface {
+	Emit(context.Context, Event) error
+}
+
+type EventKind string
+
+const (
+	EventOutput             EventKind = "output"
+	EventStatus             EventKind = "status"
+	EventAssistantStarted   EventKind = "assistant.started"
+	EventAssistantDelta     EventKind = "assistant.delta"
+	EventAssistantCompleted EventKind = "assistant.completed"
+	EventAssistantAborted   EventKind = "assistant.aborted"
+)
+
+type Stream string
+
+const (
+	StreamStdout Stream = "stdout"
+	StreamStderr Stream = "stderr"
+)
+
+type Event struct {
+	Kind   EventKind `json:"kind"`
+	TurnID string    `json:"turnId,omitempty"`
+	Round  int       `json:"round,omitempty"`
+	Stream Stream    `json:"stream,omitempty"`
+	Text   string    `json:"text,omitempty"`
 }

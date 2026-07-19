@@ -112,17 +112,43 @@ type codexOutputItem struct {
 	} `json:"content"`
 }
 
-func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, model string, request llm.Request) (Response, error) {
+func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, model string, request llm.Request, stream StreamHandler) (Response, error) {
 	payload := codexRequest(model, request)
 	headers, err := m.codexHeaders(ctx, configured)
 	if err != nil {
 		return Response{}, err
 	}
 
-	body, err := m.postJSON(ctx, configured, codexPath(configured), payload, headers)
+	resp, err := m.postJSONResponse(ctx, configured, codexPath(configured), payload, headers)
 	if err != nil {
 		return Response{}, err
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return Response{}, fmt.Errorf("read provider %q response: %w", configured.name, readErr)
+		}
+		return Response{}, fmt.Errorf("provider %q returned HTTP %d: %s", configured.name, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var raw strings.Builder
+	reader := io.TeeReader(resp.Body, &raw)
+	var message llm.Message
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		message, err = codexStreamResponseMessageReader(reader, stream)
+	} else {
+		body, readErr := io.ReadAll(reader)
+		if readErr != nil {
+			return Response{}, fmt.Errorf("read provider %q response: %w", configured.name, readErr)
+		}
+		message, err = codexResponseMessage(body)
+		if err == nil {
+			err = emitText(stream, message.Content)
+		}
+	}
+	body := []byte(raw.String())
 
 	logging.Log(ctx).Debug("received codex response body",
 		zap.String("provider", configured.name),
@@ -130,7 +156,6 @@ func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, 
 		zap.String("body", string(body)),
 	)
 
-	message, err := codexResponseMessage(body)
 	if err != nil {
 		return Response{}, fmt.Errorf("decode provider %q response: %w", configured.name, err)
 	}
@@ -513,13 +538,18 @@ type codexStreamCall struct {
 }
 
 func codexStreamResponseMessage(body []byte) (llm.Message, error) {
+	return codexStreamResponseMessageReader(strings.NewReader(string(body)), nil)
+}
+
+func codexStreamResponseMessageReader(reader io.Reader, stream StreamHandler) (llm.Message, error) {
 	var deltas strings.Builder
 	finalText := ""
 	var finalMessage *llm.Message
 	calls := make(map[string]*codexStreamCall)
 	callOrder := make([]string, 0)
 	dataLines := make([]string, 0)
-	scanner := bufio.NewScanner(strings.NewReader(string(body)))
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	streamCall := func(key string) *codexStreamCall {
 		if key == "" {
 			key = fmt.Sprintf("call_%d", len(callOrder)+1)
@@ -574,6 +604,9 @@ func codexStreamResponseMessage(body []byte) (llm.Message, error) {
 		}
 		if event.Delta != "" && (event.Type == "" || strings.Contains(event.Type, "output_text")) {
 			deltas.WriteString(event.Delta)
+			if err := emitText(stream, event.Delta); err != nil {
+				return err
+			}
 		}
 		if event.OutputText != "" {
 			finalText = event.OutputText
@@ -644,15 +677,14 @@ func codexStreamResponseMessage(body []byte) (llm.Message, error) {
 			Arguments: rawArguments(call.Arguments),
 		})
 	}
-	if len(toolCalls) > 0 {
-		return llm.Message{Role: codexResponseRole, ToolCalls: toolCalls}, nil
-	}
-
 	if deltas.Len() > 0 {
-		return llm.Message{Role: codexResponseRole, Content: deltas.String()}, nil
+		return llm.Message{Role: codexResponseRole, Content: deltas.String(), ToolCalls: toolCalls}, nil
 	}
 	if finalText != "" {
-		return llm.Message{Role: codexResponseRole, Content: finalText}, nil
+		return llm.Message{Role: codexResponseRole, Content: finalText, ToolCalls: toolCalls}, nil
+	}
+	if len(toolCalls) > 0 {
+		return llm.Message{Role: codexResponseRole, ToolCalls: toolCalls}, nil
 	}
 
 	return llm.Message{}, errors.New("codex stream contained no output")

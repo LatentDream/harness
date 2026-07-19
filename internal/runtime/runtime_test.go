@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/session/llm"
@@ -28,7 +28,7 @@ func TestRunRecordsTraceLifecycle(t *testing.T) {
 	}}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
 
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	ctx := tracing.Init(context.Background(), recorder)
 	if err := runtime.Run(ctx); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
@@ -48,8 +48,10 @@ func TestRunRecordsTraceLifecycle(t *testing.T) {
 		tracing.KindUserInput,
 		tracing.KindOutput,
 		tracing.KindOutput,
-		tracing.KindAssistantMessage,
 		tracing.KindOutput,
+		tracing.KindOutput,
+		tracing.KindOutput,
+		tracing.KindAssistantMessage,
 		tracing.KindUserInput,
 	}
 	if got := traceEventKinds(recorder.run.events); !reflect.DeepEqual(got, wantEvents) {
@@ -73,7 +75,7 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "  hello  "}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: "assistant", Content: "world"}}}}
 
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
 	}
@@ -93,6 +95,78 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 	}
 }
 
+func TestRunEmitsProgressiveAssistantEventsWithoutDuplicateOutput(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "hello"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{
+		responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "hello world"}}},
+		chunks:    [][]string{{"hello", " world"}},
+	}
+
+	runtime := New(aiProvider, userInput, userInput)
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected runtime to exit cleanly, got %v", err)
+	}
+	if !reflect.DeepEqual(userInput.responses, []string{"hello world"}) {
+		t.Fatalf("expected one assembled response, got %#v", userInput.responses)
+	}
+
+	var assistantEvents []input.Event
+	for _, event := range userInput.events {
+		switch event.Kind {
+		case input.EventAssistantStarted, input.EventAssistantDelta, input.EventAssistantCompleted, input.EventAssistantAborted:
+			assistantEvents = append(assistantEvents, event)
+		}
+	}
+	wantKinds := []input.EventKind{
+		input.EventAssistantStarted,
+		input.EventAssistantDelta,
+		input.EventAssistantDelta,
+		input.EventAssistantCompleted,
+	}
+	gotKinds := make([]input.EventKind, len(assistantEvents))
+	for index, event := range assistantEvents {
+		gotKinds[index] = event.Kind
+		if event.TurnID == "" || event.Round != 1 {
+			t.Fatalf("assistant event lacks correlation metadata: %#v", event)
+		}
+	}
+	if !reflect.DeepEqual(gotKinds, wantKinds) {
+		t.Fatalf("expected assistant event lifecycle %#v, got %#v", wantKinds, gotKinds)
+	}
+	if assistantEvents[1].Text != "hello" || assistantEvents[2].Text != " world" {
+		t.Fatalf("unexpected deltas: %#v", assistantEvents)
+	}
+}
+
+func TestRunAbortsPartialAssistantOutputOnProviderError(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "hello"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{
+		responses:    []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "partial"}}},
+		chunks:       [][]string{{"partial"}},
+		streamErrors: []error{errors.New("stream failed")},
+	}
+
+	runtime := New(aiProvider, userInput, userInput)
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected runtime to continue after provider error, got %v", err)
+	}
+	if !reflect.DeepEqual(userInput.responses, []string{"error: stream failed"}) {
+		t.Fatalf("unexpected responses: %#v", userInput.responses)
+	}
+
+	var assistantKinds []input.EventKind
+	for _, event := range userInput.events {
+		switch event.Kind {
+		case input.EventAssistantStarted, input.EventAssistantDelta, input.EventAssistantCompleted, input.EventAssistantAborted:
+			assistantKinds = append(assistantKinds, event.Kind)
+		}
+	}
+	want := []input.EventKind{input.EventAssistantStarted, input.EventAssistantDelta, input.EventAssistantAborted}
+	if !reflect.DeepEqual(assistantKinds, want) {
+		t.Fatalf("expected aborted assistant lifecycle %#v, got %#v", want, assistantKinds)
+	}
+}
+
 func TestRunKeepsConversationHistory(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "hello"}, {text: "again"}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{responses: []provider.Response{
@@ -100,7 +174,7 @@ func TestRunKeepsConversationHistory(t *testing.T) {
 		{Message: llm.Message{Role: "assistant", Content: "second"}},
 	}}
 
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
 	}
@@ -151,7 +225,7 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	}}
 
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
 		t.Fatalf("expected runtime to exit cleanly, got %v", err)
 	}
@@ -159,14 +233,14 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if !reflect.DeepEqual(userInput.responses, []string{"read complete"}) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}
-	expectedStatuses := []string{"inference", "", "Reading file " + path, "", "inference", ""}
+	expectedStatuses := []string{"working...", "", "Reading file " + path, "", "working...", ""}
 	if !reflect.DeepEqual(userInput.statuses, expectedStatuses) {
 		t.Fatalf("expected statuses %#v, got %#v", expectedStatuses, userInput.statuses)
 	}
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "glob", "grep"}) {
+	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "glob", "grep", "bash"}) {
 		t.Fatalf("expected default tool definitions, got %#v", aiProvider.queries[0].Tools)
 	}
 
@@ -196,7 +270,7 @@ func TestRunTracesToolFailureAndLetsModelRecover(t *testing.T) {
 		{Message: llm.Message{Role: llm.RoleAssistant, Content: "recovered"}},
 	}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	runtime.Tools = []model.Tool{failingTool{}}
 
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
@@ -222,7 +296,7 @@ func TestRunReturnsNilOnEOF(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{err: io.EOF}}}
 	aiProvider := &fakeProvider{}
 
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected EOF to exit cleanly, got %v", err)
 	}
@@ -236,7 +310,7 @@ func TestRunReturnsCancellationWithoutWritingAnError(t *testing.T) {
 	aiProvider := &fakeProvider{errors: []error{context.Canceled}}
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
 
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	err := runtime.Run(tracing.Init(context.Background(), recorder))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
@@ -257,7 +331,7 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 	}
 
 	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
 		t.Fatalf("expected runtime to continue after provider error, got %v", err)
 	}
@@ -290,7 +364,7 @@ func TestRunHandlesUnknownCommandWithoutProviderCall(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "/unknown"}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{}
 
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to handle unknown command cleanly, got %v", err)
 	}
@@ -307,7 +381,7 @@ func TestRunWritesHelpWithoutProviderCall(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "/help"}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{}
 
-	runtime := New(aiProvider, userInput)
+	runtime := New(aiProvider, userInput, userInput)
 	if err := runtime.Run(context.Background()); err != nil {
 		t.Fatalf("expected runtime to handle help cleanly, got %v", err)
 	}
@@ -329,6 +403,8 @@ type scriptedInput struct {
 	receives  []receiveResult
 	responses []string
 	statuses  []string
+	events    []input.Event
+	stream    strings.Builder
 }
 
 func (s *scriptedInput) Receive(context.Context) (string, error) {
@@ -341,36 +417,34 @@ func (s *scriptedInput) Receive(context.Context) (string, error) {
 	return result.text, result.err
 }
 
-func (s *scriptedInput) Write(response string) error {
-	s.responses = append(s.responses, response)
-	return nil
-}
-
-func (s *scriptedInput) SetStatus(status string) error {
-	s.statuses = append(s.statuses, status)
-	return nil
-}
-
-func (s *scriptedInput) SetStatusf(format string, args ...any) error {
-	return s.SetStatus(fmt.Sprintf(format, args...))
-}
-
-func (s *scriptedInput) Writef(format string, args ...any) error {
-	return nil
-}
-
-func (s *scriptedInput) WriteErr(response string) error {
-	return nil
-}
-
-func (s *scriptedInput) WriteErrf(format string, args ...any) error {
+func (s *scriptedInput) Emit(_ context.Context, event input.Event) error {
+	s.events = append(s.events, event)
+	switch event.Kind {
+	case input.EventOutput:
+		if event.Stream == input.StreamStdout {
+			s.responses = append(s.responses, event.Text)
+		}
+	case input.EventStatus:
+		s.statuses = append(s.statuses, event.Text)
+	case input.EventAssistantStarted:
+		s.stream.Reset()
+	case input.EventAssistantDelta:
+		s.stream.WriteString(event.Text)
+	case input.EventAssistantCompleted:
+		s.responses = append(s.responses, s.stream.String())
+		s.stream.Reset()
+	case input.EventAssistantAborted:
+		s.stream.Reset()
+	}
 	return nil
 }
 
 type fakeProvider struct {
-	queries   []llm.Request
-	responses []provider.Response
-	errors    []error
+	queries      []llm.Request
+	responses    []provider.Response
+	errors       []error
+	chunks       [][]string
+	streamErrors []error
 }
 
 func toolNames(definitions []llm.ToolDefinition) []string {
@@ -393,7 +467,7 @@ func (f *fakeProvider) Use(providerName string, modelName string) error {
 	return nil
 }
 
-func (f *fakeProvider) Send(ctx context.Context, query llm.Request) (provider.Response, error) {
+func (f *fakeProvider) Send(ctx context.Context, query llm.Request, stream provider.StreamHandler) (provider.Response, error) {
 	query.Messages = append([]llm.Message(nil), query.Messages...)
 	f.queries = append(f.queries, query)
 
@@ -410,6 +484,26 @@ func (f *fakeProvider) Send(ctx context.Context, query llm.Request) (provider.Re
 
 	response := f.responses[0]
 	f.responses = f.responses[1:]
+	chunks := []string{response.Message.Content}
+	if len(f.chunks) > 0 {
+		chunks = f.chunks[0]
+		f.chunks = f.chunks[1:]
+	}
+	for _, chunk := range chunks {
+		if chunk == "" || stream == nil {
+			continue
+		}
+		if err := stream(provider.StreamEvent{TextDelta: chunk}); err != nil {
+			return provider.Response{}, err
+		}
+	}
+	if len(f.streamErrors) > 0 {
+		err := f.streamErrors[0]
+		f.streamErrors = f.streamErrors[1:]
+		if err != nil {
+			return provider.Response{}, err
+		}
+	}
 	return response, nil
 }
 
