@@ -7,8 +7,8 @@ import (
 	"latentdream/harness/internal/tracing"
 )
 
-func UserInput(ctx context.Context, turnID string, text string) {
-	tracing.UserInput(ctx, turnID, text)
+func UserInput(ctx context.Context, turnID string, text string, mode input.Mode) {
+	tracing.UserInput(ctx, turnID, text, mode)
 }
 
 func Emit(ctx context.Context, sink input.Sink, event input.Event) error {

@@ -2,8 +2,20 @@ package input
 
 import "context"
 
+type Mode string
+
+const (
+	ModeBuild Mode = "build"
+	ModePlan  Mode = "plan"
+)
+
+type Submission struct {
+	Text string `json:"text"`
+	Mode Mode   `json:"mode,omitempty"`
+}
+
 type Receiver interface {
-	Receive(context.Context) (string, error)
+	Receive(context.Context) (Submission, error)
 }
 
 type Sink interface {

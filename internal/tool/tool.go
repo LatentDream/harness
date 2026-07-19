@@ -35,6 +35,16 @@ func ByName(tools []model.Tool) map[string]model.Tool {
 	return byName
 }
 
+func WithCapability(tools []model.Tool, capability model.Capability) []model.Tool {
+	filtered := make([]model.Tool, 0, len(tools))
+	for _, item := range tools {
+		if item != nil && item.Capability() == capability {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
 func NewDefault() []model.Tool {
 	return []model.Tool{read.New(), write.New(), glob.New(), grep.New(), bash.New()}
 }

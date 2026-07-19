@@ -15,12 +15,12 @@ func TestTerminalReceiveReadsLineAndWritesPrompt(t *testing.T) {
 	var errOutput bytes.Buffer
 	terminal := NewTerminal(strings.NewReader("hello\n"), &output, &errOutput)
 
-	text, err := terminal.Receive(context.Background())
+	submission, err := terminal.Receive(context.Background())
 	if err != nil {
 		t.Fatalf("expected receive to succeed, got %v", err)
 	}
-	if text != "hello" {
-		t.Fatalf("expected hello, got %q", text)
+	if submission.Text != "hello" || submission.Mode != ModeBuild {
+		t.Fatalf("expected build submission with hello, got %#v", submission)
 	}
 	if output.String() != "> " {
 		t.Fatalf("expected prompt, got %q", output.String())
@@ -32,12 +32,12 @@ func TestTerminalReceiveReturnsPartialLineBeforeEOF(t *testing.T) {
 	var errOutput bytes.Buffer
 	terminal := NewTerminal(strings.NewReader("hello"), &output, &errOutput)
 
-	text, err := terminal.Receive(context.Background())
+	submission, err := terminal.Receive(context.Background())
 	if err != nil {
 		t.Fatalf("expected partial line before EOF, got %v", err)
 	}
-	if text != "hello" {
-		t.Fatalf("expected hello, got %q", text)
+	if submission.Text != "hello" || submission.Mode != ModeBuild {
+		t.Fatalf("expected build submission with hello, got %#v", submission)
 	}
 
 	_, err = terminal.Receive(context.Background())

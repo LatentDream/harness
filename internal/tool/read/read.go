@@ -60,6 +60,10 @@ func (readTool) Definition() llm.ToolDefinition {
 	}
 }
 
+func (readTool) Capability() model.Capability {
+	return model.CapabilityReadOnly
+}
+
 func (readTool) Status(args json.RawMessage) string {
 	params, err := decodeReadParams(args)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime/command"
+	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool/model"
 	"latentdream/harness/internal/tracing"
@@ -68,6 +69,10 @@ func TestRunRecordsTraceLifecycle(t *testing.T) {
 	}
 	if recorder.run.events[0].TurnID == "" || recorder.run.spans[0].start.TurnID != recorder.run.events[0].TurnID {
 		t.Fatal("user input was not correlated with its turn")
+	}
+	payload, ok := recorder.run.events[0].Payload.(tracing.UserInputPayload)
+	if !ok || payload.Mode != input.ModeBuild {
+		t.Fatalf("user input did not record build mode: %#v", recorder.run.events[0].Payload)
 	}
 }
 
@@ -136,6 +141,9 @@ func TestRunEmitsProgressiveAssistantEventsWithoutDuplicateOutput(t *testing.T) 
 	if assistantEvents[1].Text != "hello" || assistantEvents[2].Text != " world" {
 		t.Fatalf("unexpected deltas: %#v", assistantEvents)
 	}
+	if assistantEvents[3].Text != "hello world" {
+		t.Fatalf("expected canonical completed text, got %#v", assistantEvents[3])
+	}
 }
 
 func TestRunAbortsPartialAssistantOutputOnProviderError(t *testing.T) {
@@ -154,16 +162,89 @@ func TestRunAbortsPartialAssistantOutputOnProviderError(t *testing.T) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}
 
-	var assistantKinds []input.EventKind
+	var assistantEvents []input.Event
 	for _, event := range userInput.events {
 		switch event.Kind {
 		case input.EventAssistantStarted, input.EventAssistantDelta, input.EventAssistantCompleted, input.EventAssistantAborted:
-			assistantKinds = append(assistantKinds, event.Kind)
+			assistantEvents = append(assistantEvents, event)
 		}
 	}
 	want := []input.EventKind{input.EventAssistantStarted, input.EventAssistantDelta, input.EventAssistantAborted}
+	assistantKinds := make([]input.EventKind, len(assistantEvents))
+	for index, event := range assistantEvents {
+		assistantKinds[index] = event.Kind
+	}
 	if !reflect.DeepEqual(assistantKinds, want) {
 		t.Fatalf("expected aborted assistant lifecycle %#v, got %#v", want, assistantKinds)
+	}
+	if assistantEvents[2].Text != "partial" {
+		t.Fatalf("expected aborted event to retain partial text, got %#v", assistantEvents[2])
+	}
+}
+
+func TestRunPlanModeUsesReadOnlyToolsAndEphemeralInstruction(t *testing.T) {
+	arguments := json.RawMessage(`{"filePath":"/missing"}`)
+	userInput := &scriptedInput{receives: []receiveResult{
+		{text: "make a plan", mode: input.Mode(" PLAN ")},
+		{text: "/exit"},
+	}}
+	aiProvider := &fakeProvider{responses: []provider.Response{
+		{Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "call_1", Name: "read", Arguments: arguments}}}},
+		{Message: llm.Message{Role: llm.RoleAssistant, Content: "the plan"}},
+	}}
+	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
+	runtime := New(aiProvider, userInput, userInput)
+
+	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
+		t.Fatalf("expected plan turn to exit cleanly, got %v", err)
+	}
+	if len(aiProvider.queries) != 2 {
+		t.Fatalf("expected two plan requests, got %d", len(aiProvider.queries))
+	}
+	for _, query := range aiProvider.queries {
+		if got := toolNames(query.Tools); !reflect.DeepEqual(got, []string{"read", "glob", "grep"}) {
+			t.Fatalf("expected only read-only plan tools, got %#v", got)
+		}
+		first := query.Messages[0]
+		if first.Role != llm.RoleSystem || !strings.Contains(first.Content, session.PlanModeInstruction) {
+			t.Fatalf("expected plan instruction in the system message on every request, got %#v", first)
+		}
+	}
+	for _, message := range runtime.Session.Conversation {
+		if strings.Contains(message.Content, session.PlanModeInstruction) {
+			t.Fatal("plan instruction was persisted in the conversation")
+		}
+	}
+	payload := recorder.run.events[0].Payload.(tracing.UserInputPayload)
+	if payload.Mode != input.ModePlan {
+		t.Fatalf("expected normalized plan mode in trace, got %#v", payload)
+	}
+}
+
+func TestRunTracesCommandSubmissionMode(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{
+		{text: "/help", mode: input.ModePlan},
+		{text: "/exit"},
+	}}
+	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
+	runtime := New(&fakeProvider{}, userInput, userInput)
+
+	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+	payload, ok := recorder.run.events[0].Payload.(tracing.UserInputPayload)
+	if !ok || payload.Mode != input.ModePlan {
+		t.Fatalf("command mode was not traced: %#v", recorder.run.events[0].Payload)
+	}
+}
+
+func TestRunRejectsUnknownSubmissionMode(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "hello", mode: "unsafe"}}}
+	runtime := New(&fakeProvider{}, userInput, userInput)
+
+	err := runtime.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `unsupported submission mode "unsafe"`) {
+		t.Fatalf("expected unsupported mode error, got %v", err)
 	}
 }
 
@@ -396,6 +477,7 @@ func TestRunWritesHelpWithoutProviderCall(t *testing.T) {
 
 type receiveResult struct {
 	text string
+	mode input.Mode
 	err  error
 }
 
@@ -407,14 +489,14 @@ type scriptedInput struct {
 	stream    strings.Builder
 }
 
-func (s *scriptedInput) Receive(context.Context) (string, error) {
+func (s *scriptedInput) Receive(context.Context) (input.Submission, error) {
 	if len(s.receives) == 0 {
-		return "", io.EOF
+		return input.Submission{}, io.EOF
 	}
 
 	result := s.receives[0]
 	s.receives = s.receives[1:]
-	return result.text, result.err
+	return input.Submission{Text: result.text, Mode: result.mode}, result.err
 }
 
 func (s *scriptedInput) Emit(_ context.Context, event input.Event) error {
@@ -431,7 +513,7 @@ func (s *scriptedInput) Emit(_ context.Context, event input.Event) error {
 	case input.EventAssistantDelta:
 		s.stream.WriteString(event.Text)
 	case input.EventAssistantCompleted:
-		s.responses = append(s.responses, s.stream.String())
+		s.responses = append(s.responses, event.Text)
 		s.stream.Reset()
 	case input.EventAssistantAborted:
 		s.stream.Reset()
@@ -511,6 +593,10 @@ type failingTool struct{}
 
 func (failingTool) Definition() llm.ToolDefinition {
 	return llm.ToolDefinition{Name: "fail", Parameters: llm.Schema{Type: "object"}}
+}
+
+func (failingTool) Capability() model.Capability {
+	return model.CapabilityMutating
 }
 
 func (failingTool) Status(json.RawMessage) string {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/session/llm"
 )
@@ -122,6 +123,11 @@ type TurnOutcome struct {
 	Status      Status      `json:"status"`
 	Error       *TraceError `json:"error,omitempty"`
 	FinalAnswer string      `json:"finalAnswer,omitempty"`
+}
+
+type UserInputPayload struct {
+	Text string     `json:"text"`
+	Mode input.Mode `json:"mode,omitempty"`
 }
 
 type TraceError struct {

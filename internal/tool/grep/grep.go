@@ -67,6 +67,10 @@ func (grepTool) Definition() llm.ToolDefinition {
 	}
 }
 
+func (grepTool) Capability() model.Capability {
+	return model.CapabilityReadOnly
+}
+
 func (grepTool) Status(args json.RawMessage) string {
 	params, err := decodeGrepParams(args)
 	if err != nil {

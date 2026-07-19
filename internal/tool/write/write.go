@@ -53,6 +53,10 @@ func (writeTool) Definition() llm.ToolDefinition {
 	}
 }
 
+func (writeTool) Capability() model.Capability {
+	return model.CapabilityMutating
+}
+
 func (writeTool) Status(args json.RawMessage) string {
 	params, err := decodeWriteParams(args)
 	if err != nil {

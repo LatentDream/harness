@@ -70,6 +70,10 @@ func (globTool) Definition() llm.ToolDefinition {
 	}
 }
 
+func (globTool) Capability() model.Capability {
+	return model.CapabilityReadOnly
+}
+
 func (globTool) Status(args json.RawMessage) string {
 	params, err := decodeGlobParams(args)
 	if err != nil {

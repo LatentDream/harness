@@ -28,7 +28,7 @@ const (
 var bashDescription string
 
 type bashTool struct {
-	executable      string
+	executable     string
 	defaultTimeout time.Duration
 	maxTimeout     time.Duration
 }
@@ -41,7 +41,7 @@ type bashParams struct {
 
 func New() model.Tool {
 	return bashTool{
-		executable:      "/bin/bash",
+		executable:     "/bin/bash",
 		defaultTimeout: defaultTimeoutSeconds * time.Second,
 		maxTimeout:     maxTimeoutSeconds * time.Second,
 	}
@@ -72,6 +72,10 @@ func (bashTool) Definition() llm.ToolDefinition {
 			AdditionalProperties: &additionalProperties,
 		},
 	}
+}
+
+func (bashTool) Capability() model.Capability {
+	return model.CapabilityMutating
 }
 
 func (bashTool) Status(args json.RawMessage) string {

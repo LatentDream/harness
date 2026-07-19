@@ -662,6 +662,9 @@ func codexStreamResponseMessageReader(reader io.Reader, stream StreamHandler) (l
 	}
 
 	if finalMessage != nil {
+		if finalMessage.Content == "" && deltas.Len() > 0 {
+			finalMessage.Content = deltas.String()
+		}
 		return *finalMessage, nil
 	}
 

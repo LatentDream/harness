@@ -24,6 +24,13 @@ type Command interface {
 	Execute(args []string) (Result, error)
 }
 
+// Entry describes a command and the mappings that invoke it.
+type Entry struct {
+	Name        string
+	Mappings    []string
+	Description string
+}
+
 type Registry struct {
 	commands map[string]Command
 }
@@ -85,12 +92,13 @@ func (r *Registry) IsCommand(input string) Command {
 	return r.commands[normalize(name)]
 }
 
-func (r *Registry) Help() string {
+// Entries returns command descriptions sorted by command name.
+func (r *Registry) Entries() []Entry {
 	if r == nil || len(r.commands) == 0 {
-		return "Available commands:\n  none"
+		return nil
 	}
 
-	commands := make(map[string]helpEntry)
+	commands := make(map[string]Entry)
 	for _, cmd := range r.commands {
 		if cmd == nil {
 			continue
@@ -101,15 +109,15 @@ func (r *Registry) Help() string {
 			continue
 		}
 
-		entry := helpEntry{mappings: cleanMappings(cmd.Mapping())}
+		entry := Entry{Name: name, Mappings: cleanMappings(cmd.Mapping())}
 		if described, ok := cmd.(interface{ Description() string }); ok {
-			entry.description = strings.TrimSpace(described.Description())
+			entry.Description = strings.TrimSpace(described.Description())
 		}
 		commands[name] = entry
 	}
 
 	if len(commands) == 0 {
-		return "Available commands:\n  none"
+		return nil
 	}
 
 	names := make([]string, 0, len(commands))
@@ -118,23 +126,32 @@ func (r *Registry) Help() string {
 	}
 	sort.Strings(names)
 
-	var output strings.Builder
-	output.WriteString("Available commands:")
+	entries := make([]Entry, 0, len(names))
 	for _, name := range names {
 		entry := commands[name]
+		entry.Mappings = append([]string(nil), entry.Mappings...)
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func (r *Registry) Help() string {
+	entries := r.Entries()
+	if len(entries) == 0 {
+		return "Available commands:\n  none"
+	}
+
+	var output strings.Builder
+	output.WriteString("Available commands:")
+	for _, entry := range entries {
 		output.WriteString("\n  ")
-		output.WriteString(strings.Join(entry.mappings, ", "))
-		if entry.description != "" {
+		output.WriteString(strings.Join(entry.Mappings, ", "))
+		if entry.Description != "" {
 			output.WriteString(" - ")
-			output.WriteString(entry.description)
+			output.WriteString(entry.Description)
 		}
 	}
 	return output.String()
-}
-
-type helpEntry struct {
-	mappings    []string
-	description string
 }
 
 func parse(input string) (string, []string) {

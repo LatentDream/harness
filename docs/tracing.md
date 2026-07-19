@@ -28,7 +28,7 @@ and tool results rather than silently performing live work.
 
 ### Inputs
 
-- User prompts.
+- User prompts and their selected Build or Plan mode.
 - A redacted configuration snapshot.
 - Explicitly allowlisted environment metadata.
 - Repository identity, commit, and working tree state.

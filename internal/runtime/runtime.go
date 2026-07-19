@@ -40,13 +40,17 @@ type Runtime struct {
 }
 
 func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink) *Runtime {
+	return NewWithCommands(aiProvider, receiver, output, command.DefaultRegistry())
+}
+
+func NewWithCommands(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, commands *command.Registry) *Runtime {
 	return &Runtime{
 		id:       uuid.New(),
 		Provider: aiProvider,
 		Tools:    tool.NewDefault(),
 		receiver: receiver,
 		output:   output,
-		commands: command.DefaultRegistry(),
+		commands: commands,
 	}
 }
 
@@ -81,7 +85,7 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) error {
 		default:
 		}
 
-		text, err := r.receiver.Receive(ctx)
+		submission, err := r.receiver.Receive(ctx)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			trace.SetReason(tracing.EndReasonCancelled)
 			return err
@@ -95,16 +99,22 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) error {
 			return errors.Join(operationErr, execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error()), tracing.Checkpoint(ctx))
 		}
 
+		submission.Mode, err = normalizeMode(submission.Mode)
+		if err != nil {
+			operationErr := fmt.Errorf("receive input: %w", err)
+			return errors.Join(operationErr, execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error()), tracing.Checkpoint(ctx))
+		}
+		text := submission.Text
 		commandText := strings.TrimSpace(text)
 		if commandText == "" {
-			execution.UserInput(ctx, "", text)
+			execution.UserInput(ctx, "", text, submission.Mode)
 			if err := tracing.Checkpoint(ctx); err != nil {
 				return err
 			}
 			continue
 		}
 		if r.isCommand(commandText) {
-			action, err := r.handleCommand(ctx, text, commandText)
+			action, err := r.handleCommand(ctx, text, commandText, submission.Mode)
 			if err != nil {
 				return err
 			}
@@ -115,14 +125,14 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) error {
 			continue
 		}
 
-		if err := r.handleTurn(ctx, text); err != nil {
+		if err := r.handleTurn(ctx, submission); err != nil {
 			return err
 		}
 	}
 }
 
-func (r *Runtime) handleCommand(ctx context.Context, text string, commandText string) (command.Action, error) {
-	ctx, span, err := tracing.BeginCommand(ctx, commandText, text)
+func (r *Runtime) handleCommand(ctx context.Context, text string, commandText string, mode input.Mode) (command.Action, error) {
+	ctx, span, err := tracing.BeginCommand(ctx, commandText, text, mode)
 	if err != nil {
 		return command.ActionContinue, fmt.Errorf("start command trace: %w", err)
 	}
@@ -147,17 +157,17 @@ func (r *Runtime) handleCommand(ctx context.Context, text string, commandText st
 	return result.Action, errors.Join(writeErr, span.Checkpoint())
 }
 
-func (r *Runtime) handleTurn(ctx context.Context, text string) error {
+func (r *Runtime) handleTurn(ctx context.Context, submission input.Submission) error {
 	turnID := uuid.NewString()
-	ctx, turn, err := tracing.BeginTurn(ctx, turnID, text)
+	ctx, turn, err := tracing.BeginTurn(ctx, turnID, submission.Text, submission.Mode)
 	if err != nil {
 		return fmt.Errorf("start turn trace: %w", err)
 	}
 
 	rollbackIndex := len(r.Session.Conversation)
-	r.Session.Conversation = append(r.Session.Conversation, llm.Message{Role: llm.RoleUser, Content: text})
+	r.Session.Conversation = append(r.Session.Conversation, llm.Message{Role: llm.RoleUser, Content: submission.Text})
 
-	response, inferenceErr := r.inference(ctx, turnID)
+	response, inferenceErr := r.inference(ctx, turnID, submission.Mode)
 	if inferenceErr != nil {
 		r.Session.Conversation = r.Session.Conversation[:rollbackIndex]
 
@@ -183,13 +193,21 @@ func (r *Runtime) handleTurn(ctx context.Context, text string) error {
 	return turn.Checkpoint()
 }
 
-func (r *Runtime) inference(ctx context.Context, turnID string) (string, error) {
-	definitions := tool.Definitions(r.Tools)
-	toolsByName := tool.ByName(r.Tools)
+func (r *Runtime) inference(ctx context.Context, turnID string, mode input.Mode) (string, error) {
+	availableTools := r.Tools
+	if mode == input.ModePlan {
+		availableTools = tool.WithCapability(r.Tools, model.CapabilityReadOnly)
+	}
+	definitions := tool.Definitions(availableTools)
+	toolsByName := tool.ByName(availableTools)
 
 	for round := 0; round < maxToolRounds; round++ {
+		messages := r.Session.Conversation
+		if mode == input.ModePlan {
+			messages = messagesWithPlanInstruction(messages)
+		}
 		response, err := execution.LLMCall(ctx, r.output, r.Provider, llm.Request{
-			Messages: r.Session.Conversation,
+			Messages: messages,
 			Tools:    definitions,
 		}, round+1, turnID)
 		if err != nil {
@@ -211,6 +229,17 @@ func (r *Runtime) inference(ctx context.Context, turnID string) (string, error) 
 	}
 
 	return "", errors.New("tool call limit exceeded")
+}
+
+func messagesWithPlanInstruction(messages []llm.Message) []llm.Message {
+	result := append([]llm.Message(nil), messages...)
+	for index := range result {
+		if result[index].Role == llm.RoleSystem {
+			result[index].Content += "\n\n" + session.PlanModeInstruction
+			return result
+		}
+	}
+	return append([]llm.Message{{Role: llm.RoleSystem, Content: session.PlanModeInstruction}}, result...)
 }
 
 func (r *Runtime) initialize() error {
@@ -239,4 +268,15 @@ func (r *Runtime) isCommand(text string) bool {
 
 func (r *Runtime) sessionState() tracing.SessionState {
 	return tracing.SessionState{Conversation: r.Session.Conversation}
+}
+
+func normalizeMode(mode input.Mode) (input.Mode, error) {
+	switch input.Mode(strings.ToLower(strings.TrimSpace(string(mode)))) {
+	case "", input.ModeBuild:
+		return input.ModeBuild, nil
+	case input.ModePlan:
+		return input.ModePlan, nil
+	default:
+		return "", fmt.Errorf("unsupported submission mode %q", mode)
+	}
 }

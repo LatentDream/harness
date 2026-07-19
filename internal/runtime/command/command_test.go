@@ -79,6 +79,36 @@ func TestRegistryExecutesDefaultHelpCommand(t *testing.T) {
 	}
 }
 
+func TestRegistryEntriesAreSortedWithAliasesAndDescriptions(t *testing.T) {
+	registry := NewRegistry(
+		&describedCommand{name: "zebra", mappings: []string{" /zebra ", ":z"}, description: " striped command "},
+		&describedCommand{name: "alpha", mappings: []string{"/alpha", ":a"}, description: "first command"},
+	)
+
+	expected := []Entry{
+		{Name: "alpha", Mappings: []string{"/alpha", ":a"}, Description: "first command"},
+		{Name: "zebra", Mappings: []string{"/zebra", ":z"}, Description: "striped command"},
+	}
+	if entries := registry.Entries(); !reflect.DeepEqual(entries, expected) {
+		t.Fatalf("expected entries %#v, got %#v", expected, entries)
+	}
+}
+
+func TestRegistryEntriesReturnsCopies(t *testing.T) {
+	command := &describedCommand{name: "test", mappings: []string{"/test", ":t"}, description: "test command"}
+	registry := NewRegistry(command)
+
+	entries := registry.Entries()
+	entries[0].Name = "changed"
+	entries[0].Mappings[0] = "/changed"
+	entries[0].Description = "changed"
+
+	expected := []Entry{{Name: "test", Mappings: []string{"/test", ":t"}, Description: "test command"}}
+	if actual := registry.Entries(); !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("expected entries %#v after mutation, got %#v", expected, actual)
+	}
+}
+
 func TestRegistryReturnsCommandErrors(t *testing.T) {
 	expectedErr := errors.New("boom")
 	registry := NewRegistry(&recordingCommand{err: expectedErr})
@@ -108,4 +138,26 @@ func (cmd *recordingCommand) Mapping() []string {
 func (cmd *recordingCommand) Execute(args []string) (Result, error) {
 	cmd.args = args
 	return Result{Output: "ok"}, cmd.err
+}
+
+type describedCommand struct {
+	name        string
+	mappings    []string
+	description string
+}
+
+func (cmd *describedCommand) Name() string {
+	return cmd.name
+}
+
+func (cmd *describedCommand) Mapping() []string {
+	return append([]string(nil), cmd.mappings...)
+}
+
+func (cmd *describedCommand) Description() string {
+	return cmd.description
+}
+
+func (cmd *describedCommand) Execute([]string) (Result, error) {
+	return Result{}, nil
 }

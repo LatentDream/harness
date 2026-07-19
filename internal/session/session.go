@@ -11,6 +11,8 @@ import (
 
 var projectContextFiles = []string{"AGENTS.md", "AGENT.md", "CLAUDE.md"}
 
+const PlanModeInstruction = "You are in Plan mode. Investigate using only read-only tools. Do not modify files or execute mutating actions. Return a clear implementation plan instead of making changes."
+
 type Session struct {
 	Conversation []llm.Message
 }

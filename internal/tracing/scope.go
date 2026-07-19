@@ -3,6 +3,8 @@ package tracing
 import (
 	"context"
 	"errors"
+
+	"latentdream/harness/internal/input"
 )
 
 type RecordingError struct {
@@ -119,17 +121,17 @@ func (s *SpanScope) Checkpoint() error {
 }
 
 // BeginCommand starts a command span and records the exact user input.
-func BeginCommand(ctx context.Context, input string, userInput string) (context.Context, *SpanScope, error) {
+func BeginCommand(ctx context.Context, commandInput string, userInput string, mode input.Mode) (context.Context, *SpanScope, error) {
 	ctx, span, err := BeginSpan(ctx, SpanStart{
 		Kind: SpanCommand,
 		Payload: struct {
 			Input string `json:"input"`
-		}{Input: input},
+		}{Input: commandInput},
 	})
 	if err != nil {
 		return ctx, nil, err
 	}
-	UserInput(ctx, "", userInput)
+	UserInput(ctx, "", userInput, mode)
 	if err := Checkpoint(ctx); err != nil {
 		span.End(err, nil)
 		return ctx, nil, errors.Join(err, Checkpoint(ctx))
@@ -138,12 +140,12 @@ func BeginCommand(ctx context.Context, input string, userInput string) (context.
 }
 
 // BeginTurn starts a turn span and records its user input.
-func BeginTurn(ctx context.Context, turnID string, input string) (context.Context, *TurnScope, error) {
+func BeginTurn(ctx context.Context, turnID string, text string, mode input.Mode) (context.Context, *TurnScope, error) {
 	ctx, span, err := BeginSpan(ctx, SpanStart{Kind: SpanTurn, TurnID: turnID})
 	if err != nil {
 		return ctx, nil, err
 	}
-	UserInput(ctx, turnID, input)
+	UserInput(ctx, turnID, text, mode)
 	if err := Checkpoint(ctx); err != nil {
 		span.End(err, nil)
 		return ctx, nil, errors.Join(err, Checkpoint(ctx))
@@ -191,13 +193,11 @@ func (s *TurnScope) Checkpoint() error {
 }
 
 // UserInput records user-provided text and associates it with an optional turn.
-func UserInput(ctx context.Context, turnID string, text string) {
+func UserInput(ctx context.Context, turnID string, text string, mode input.Mode) {
 	Record(ctx, Event{
-		Kind:   KindUserInput,
-		TurnID: turnID,
-		Payload: struct {
-			Text string `json:"text"`
-		}{Text: text},
+		Kind:    KindUserInput,
+		TurnID:  turnID,
+		Payload: UserInputPayload{Text: text, Mode: mode},
 	})
 }
 

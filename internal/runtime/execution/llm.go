@@ -45,18 +45,18 @@ func LLMCall(
 		return sendErr
 	})
 	if callErr != nil {
-		abortErr := output.finish(input.EventAssistantAborted)
+		abortErr := output.finish(input.EventAssistantAborted, output.text.String())
 		span.End(callErr, nil)
 		return provider.Response{}, errors.Join(callErr, abortErr, tracing.Checkpoint(callCtx))
 	}
 	if !output.started && response.Message.Content != "" {
 		if err := output.delta(response.Message.Content); err != nil {
-			abortErr := output.finish(input.EventAssistantAborted)
+			abortErr := output.finish(input.EventAssistantAborted, output.text.String())
 			span.End(err, nil)
 			return provider.Response{}, errors.Join(err, abortErr, tracing.Checkpoint(callCtx))
 		}
 	}
-	if err := output.finish(input.EventAssistantCompleted); err != nil {
+	if err := output.finish(input.EventAssistantCompleted, response.Message.Content); err != nil {
 		span.End(err, nil)
 		return provider.Response{}, errors.Join(err, tracing.Checkpoint(callCtx))
 	}
@@ -88,6 +88,7 @@ type assistantOutput struct {
 	turnID  string
 	round   int
 	started bool
+	text    strings.Builder
 }
 
 func (o *assistantOutput) delta(text string) error {
@@ -102,18 +103,20 @@ func (o *assistantOutput) delta(text string) error {
 		}
 		o.started = true
 	}
+	o.text.WriteString(text)
 	return Emit(o.ctx, o.sink, input.Event{
 		Kind: input.EventAssistantDelta, TurnID: o.turnID, Round: o.round, Stream: input.StreamStdout, Text: text,
 	})
 }
 
-func (o *assistantOutput) finish(kind input.EventKind) error {
+func (o *assistantOutput) finish(kind input.EventKind, text string) error {
 	if !o.started {
 		return nil
 	}
 	err := Emit(o.ctx, o.sink, input.Event{
-		Kind: kind, TurnID: o.turnID, Round: o.round, Stream: input.StreamStdout,
+		Kind: kind, TurnID: o.turnID, Round: o.round, Stream: input.StreamStdout, Text: text,
 	})
 	o.started = false
+	o.text.Reset()
 	return err
 }

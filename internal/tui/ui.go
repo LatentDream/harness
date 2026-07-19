@@ -1,0 +1,518 @@
+package tui
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"latentdream/harness/internal/input"
+	"latentdream/harness/internal/runtime/command"
+)
+
+type Options struct {
+	Provider         string
+	Model            string
+	WorkingDirectory string
+	Commands         *command.Registry
+}
+
+type UI struct {
+	in       *os.File
+	out      *os.File
+	err      *os.File
+	terminal *nativeTerminal
+	fzf      string
+	options  Options
+
+	submissions chan input.Submission
+	events      chan input.Event
+	ready       chan struct{}
+}
+
+type blockKind int
+
+const (
+	blockUser blockKind = iota
+	blockAssistant
+	blockOutput
+	blockError
+)
+
+type transcriptBlock struct {
+	kind        blockKind
+	text        string
+	mode        input.Mode
+	turnID      string
+	round       int
+	interrupted bool
+}
+
+type streamKey struct {
+	turnID string
+	round  int
+}
+
+type model struct {
+	width            int
+	height           int
+	provider         string
+	modelName        string
+	workingDirectory string
+	mode             input.Mode
+	focused          bool
+	ready            bool
+	status           string
+	notice           string
+	spinner          int
+	scrollOffset     int
+	colors           palette
+	editor           editor
+	blocks           []transcriptBlock
+	streams          map[streamKey]int
+}
+
+type readResult struct {
+	data []byte
+	err  error
+}
+
+func New(in, out, errOut *os.File, options Options) (*UI, error) {
+	if in == nil || out == nil || errOut == nil {
+		return nil, errors.New("tui requires stdin, stdout, and stderr")
+	}
+	if options.Commands == nil {
+		options.Commands = command.DefaultRegistry()
+	}
+	if options.WorkingDirectory == "" {
+		options.WorkingDirectory, _ = os.Getwd()
+	}
+	terminal := newNativeTerminal(in, out)
+	ui := &UI{
+		in:          in,
+		out:         out,
+		err:         errOut,
+		terminal:    terminal,
+		options:     options,
+		submissions: make(chan input.Submission, 1),
+		events:      make(chan input.Event, 128),
+		ready:       make(chan struct{}, 1),
+	}
+	if terminal.IsInteractive() {
+		fzf, findErr := findFZF()
+		if findErr != nil {
+			return nil, findErr
+		}
+		ui.fzf = fzf
+	}
+	return ui, nil
+}
+
+func IsInteractive(in, out *os.File) bool {
+	return newNativeTerminal(in, out).IsInteractive()
+}
+
+func (u *UI) Receive(ctx context.Context) (input.Submission, error) {
+	select {
+	case u.ready <- struct{}{}:
+	default:
+	}
+	select {
+	case submission := <-u.submissions:
+		return submission, nil
+	case <-ctx.Done():
+		return input.Submission{}, ctx.Err()
+	}
+}
+
+func (u *UI) Emit(ctx context.Context, event input.Event) error {
+	select {
+	case u.events <- event:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (runErr error) {
+	if runRuntime == nil {
+		return errors.New("tui runtime function is required")
+	}
+	if !u.terminal.IsInteractive() {
+		return errTerminalNotInteractive
+	}
+	if u.fzf == "" {
+		return errors.New("fzf is required for interactive mode")
+	}
+	if err := u.terminal.Enter(); err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, u.terminal.Restore()) }()
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	runtimeDone := make(chan error, 1)
+	runtimeStopped := make(chan struct{})
+	go func() {
+		defer close(runtimeStopped)
+		runtimeDone <- runRuntime(runCtx)
+	}()
+
+	width, height, err := u.terminal.Size()
+	if err != nil {
+		return err
+	}
+	state := model{
+		width:            width,
+		height:           height,
+		provider:         u.options.Provider,
+		modelName:        u.options.Model,
+		workingDirectory: u.options.WorkingDirectory,
+		mode:             input.ModeBuild,
+		focused:          true,
+		colors:           palette{enabled: os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"},
+		streams:          make(map[streamKey]int),
+	}
+	state.editor.historyIndex = 0
+	if err := u.draw(&state); err != nil {
+		return err
+	}
+
+	readRequests := make(chan struct{}, 1)
+	readResults := make(chan readResult, 1)
+	pumpCtx, stopPump := context.WithCancel(context.Background())
+	pumpDone := make(chan struct{})
+	go inputPump(pumpCtx, u.in, readRequests, readResults, pumpDone)
+	defer func() {
+		cancel()
+		stopPump()
+		<-pumpDone
+		select {
+		case <-runtimeStopped:
+		case <-time.After(time.Second):
+		}
+	}()
+	requestRead(readRequests)
+	decoder := keyDecoder{}
+
+	resize := make(chan os.Signal, 1)
+	if resizeSignal := platformResizeSignal(); resizeSignal != nil {
+		signal.Notify(resize, resizeSignal)
+		defer signal.Stop(resize)
+	}
+	ticker := time.NewTicker(120 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-runtimeDone:
+			if errors.Is(err, context.Canceled) && ctx.Err() == nil {
+				return nil
+			}
+			return err
+		case <-u.ready:
+			state.ready = true
+			state.status = ""
+			if err := u.draw(&state); err != nil {
+				return err
+			}
+		case event := <-u.events:
+			state.apply(event)
+			for drained := 0; drained < 64; drained++ {
+				select {
+				case queued := <-u.events:
+					state.apply(queued)
+				default:
+					drained = 64
+				}
+			}
+			if err := u.draw(&state); err != nil {
+				return err
+			}
+		case result := <-readResults:
+			if result.err != nil {
+				if errors.Is(result.err, io.EOF) {
+					cancel()
+					return nil
+				}
+				return fmt.Errorf("read terminal input: %w", result.err)
+			}
+			pressedKeys := decoder.feed(result.data)
+			for index := 0; index < len(pressedKeys); index++ {
+				pressed := pressedKeys[index]
+				if state.ready && pressed.kind == keyText && (pressed.text == "@" || ((pressed.text == "/" || pressed.text == ":") && state.editor.empty())) {
+					query := ""
+					for index+1 < len(pressedKeys) && pressedKeys[index+1].kind == keyText {
+						index++
+						query += pressedKeys[index].text
+					}
+					if pressed.text == "@" {
+						err = u.pickFile(runCtx, &state, query)
+					} else {
+						err = u.pickCommand(runCtx, &state, pressed.text, query)
+					}
+					if err != nil {
+						state.notice = err.Error()
+					}
+					index = len(pressedKeys)
+					continue
+				}
+				quit, err := u.handleKey(runCtx, &state, pressed)
+				if err != nil {
+					state.notice = err.Error()
+				}
+				if quit {
+					cancel()
+					return context.Canceled
+				}
+			}
+			if err := u.draw(&state); err != nil {
+				return err
+			}
+			requestRead(readRequests)
+		case <-resize:
+			width, height, sizeErr := u.terminal.Size()
+			if sizeErr == nil {
+				state.width, state.height = width, height
+				if err := u.draw(&state); err != nil {
+					return err
+				}
+			}
+		case <-ticker.C:
+			for _, pressed := range decoder.flushPending(time.Now()) {
+				quit, keyErr := u.handleKey(runCtx, &state, pressed)
+				if keyErr != nil {
+					state.notice = keyErr.Error()
+				}
+				if quit {
+					cancel()
+					return context.Canceled
+				}
+			}
+			if state.status != "" {
+				state.spinner++
+				if err := u.draw(&state); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
+func inputPump(ctx context.Context, reader *os.File, requests <-chan struct{}, results chan<- readResult, done chan<- struct{}) {
+	defer close(done)
+	buffer := make([]byte, 4096)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-requests:
+		}
+		for {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+			ready, err := platformWaitReadable(reader.Fd(), 100*time.Millisecond)
+			if err != nil {
+				select {
+				case results <- readResult{err: err}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			if ready {
+				break
+			}
+		}
+		count, err := reader.Read(buffer)
+		data := append([]byte(nil), buffer[:count]...)
+		select {
+		case results <- readResult{data: data, err: err}:
+		case <-ctx.Done():
+			return
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func requestRead(requests chan<- struct{}) {
+	select {
+	case requests <- struct{}{}:
+	default:
+	}
+}
+
+func (u *UI) draw(state *model) error {
+	_, err := io.WriteString(u.out, state.render())
+	return err
+}
+
+func (m *model) apply(event input.Event) {
+	m.notice = ""
+	switch event.Kind {
+	case input.EventStatus:
+		m.status = event.Text
+	case input.EventOutput:
+		kind := blockOutput
+		if event.Stream == input.StreamStderr || strings.HasPrefix(strings.ToLower(event.Text), "error:") {
+			kind = blockError
+		}
+		m.blocks = append(m.blocks, transcriptBlock{kind: kind, text: event.Text, turnID: event.TurnID})
+		m.scrollOffset = 0
+	case input.EventAssistantStarted:
+		key := streamKey{turnID: event.TurnID, round: event.Round}
+		m.blocks = append(m.blocks, transcriptBlock{kind: blockAssistant, turnID: event.TurnID, round: event.Round})
+		m.streams[key] = len(m.blocks) - 1
+		m.scrollOffset = 0
+	case input.EventAssistantDelta:
+		if index, ok := m.streams[streamKey{turnID: event.TurnID, round: event.Round}]; ok {
+			m.blocks[index].text += event.Text
+		}
+		m.scrollOffset = 0
+	case input.EventAssistantCompleted:
+		key := streamKey{turnID: event.TurnID, round: event.Round}
+		if index, ok := m.streams[key]; ok {
+			m.blocks[index].text = event.Text
+			m.blocks[index].interrupted = false
+			delete(m.streams, key)
+		}
+	case input.EventAssistantAborted:
+		key := streamKey{turnID: event.TurnID, round: event.Round}
+		if index, ok := m.streams[key]; ok {
+			if event.Text != "" {
+				m.blocks[index].text = event.Text
+			}
+			m.blocks[index].interrupted = true
+			delete(m.streams, key)
+		}
+	}
+}
+
+func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, error) {
+	state.notice = ""
+	switch pressed.kind {
+	case keyCtrlC:
+		return true, nil
+	case keyFocusIn:
+		state.focused = true
+		return false, nil
+	case keyFocusOut:
+		state.focused = false
+		return false, nil
+	case keyPageUp:
+		state.scrollOffset += max(1, state.height/2)
+		return false, nil
+	case keyPageDown:
+		state.scrollOffset = max(0, state.scrollOffset-max(1, state.height/2))
+		return false, nil
+	case keyTab:
+		if state.mode == input.ModeBuild {
+			state.mode = input.ModePlan
+		} else {
+			state.mode = input.ModeBuild
+		}
+		return false, nil
+	}
+	if !state.ready {
+		return false, nil
+	}
+	switch pressed.kind {
+	case keyEnter:
+		text := state.editor.value()
+		if strings.TrimSpace(text) == "" {
+			return false, nil
+		}
+		state.editor.remember(text)
+		state.blocks = append(state.blocks, transcriptBlock{kind: blockUser, text: text, mode: state.mode})
+		state.scrollOffset = 0
+		state.ready = false
+		state.status = "starting..."
+		u.submissions <- input.Submission{Text: text, Mode: state.mode}
+		state.editor.reset()
+	case keyNewline:
+		state.editor.insert("\n")
+	case keyEscape:
+		state.editor.reset()
+	case keyBackspace:
+		state.editor.backspace()
+	case keyDelete:
+		state.editor.delete()
+	case keyCtrlW:
+		state.editor.deleteWord()
+	case keyLeft:
+		state.editor.moveLeft()
+	case keyRight:
+		state.editor.moveRight()
+	case keyWordLeft:
+		state.editor.moveWord(-1)
+	case keyWordRight:
+		state.editor.moveWord(1)
+	case keyUp:
+		state.editor.vertical(-1)
+	case keyDown:
+		state.editor.vertical(1)
+	case keyHome:
+		state.editor.home()
+	case keyEnd:
+		state.editor.end()
+	case keyText:
+		if pressed.text == "@" {
+			return false, u.pickFile(ctx, state, "")
+		}
+		if (pressed.text == "/" || pressed.text == ":") && state.editor.empty() {
+			return false, u.pickCommand(ctx, state, pressed.text, "")
+		}
+		state.editor.insert(pressed.text)
+	}
+	return false, nil
+}
+
+func (u *UI) pickFile(ctx context.Context, state *model, query string) error {
+	candidates, err := fileCandidates(ctx, state.workingDirectory)
+	if err != nil {
+		state.editor.insert("@")
+		return err
+	}
+	selected, ok, err := u.runPicker(ctx, candidates, "Files > ", query, true)
+	if err != nil {
+		state.editor.insert("@")
+		return err
+	}
+	if !ok {
+		state.editor.insert("@")
+		return nil
+	}
+	state.editor.insert("@" + filepath.ToSlash(selected) + " ")
+	return nil
+}
+
+func (u *UI) pickCommand(ctx context.Context, state *model, prefix string, query string) error {
+	selected, ok, err := u.runPicker(ctx, commandCandidates(u.options.Commands, prefix), "Commands > ", query, false)
+	if err != nil {
+		state.editor.insert(prefix)
+		return err
+	}
+	if !ok {
+		state.editor.insert(prefix)
+		return nil
+	}
+	state.editor.set(selected + " ")
+	return nil
+}
+
+func (u *UI) runPicker(ctx context.Context, candidates []string, prompt string, query string, zeroDelimited bool) (selection string, selected bool, runErr error) {
+	if err := u.terminal.Suspend(); err != nil {
+		return "", false, err
+	}
+	defer func() { runErr = errors.Join(runErr, u.terminal.Resume()) }()
+	return runFZF(ctx, u.fzf, candidates, prompt, query, zeroDelimited, u.err)
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,22 +13,30 @@ import (
 	"latentdream/harness/internal/logging"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime"
+	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/tracing"
+	"latentdream/harness/internal/tui"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 func main() {
+	exitCode := run()
+	_ = logging.Sync()
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
+}
+
+func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	ui := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
-
 	cfg, err := config.Load()
 	if err != nil {
-		ui.WriteErrf("failed to load config: %v", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		return 1
 	}
 
 	sessionID := uuid.NewString()
@@ -36,25 +45,42 @@ func main() {
 	}
 	cfg.Logging.InitialFields["sessionId"] = sessionID
 	logging.ConfigureOrExitForSession(cfg.Logging, sessionID)
-	defer func() { _ = logging.Sync() }()
 
 	ctx = tracing.Init(ctx, tracing.LogRecorder(cfg.Tracing.FilePath, sessionID))
 
 	aiProvider, err := provider.New(cfg.Providers)
 	if err != nil {
-		ui.WriteErrf("failed to initialize provider: %v", err)
-		logging.Log(ctx).Fatal("provider initialization failure", zap.Error(err))
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize provider: %v\n", err)
+		logging.Log(ctx).Error("provider initialization failure", zap.Error(err))
+		return 1
 	}
 
 	selection := aiProvider.Current()
-	ui.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
-
-	harness := runtime.New(aiProvider, ui, ui)
-	if err := harness.Run(ctx); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
+	commands := command.DefaultRegistry()
+	if tui.IsInteractive(os.Stdin, os.Stdout) {
+		workingDirectory, _ := os.Getwd()
+		frontend, err := tui.New(os.Stdin, os.Stdout, os.Stderr, tui.Options{
+			Provider:         selection.Provider,
+			Model:            selection.Model,
+			WorkingDirectory: workingDirectory,
+			Commands:         commands,
+		})
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize terminal UI: %v\n", err)
+			return 1
 		}
-		ui.WriteErrf("runtime failed: %v", err)
-		logging.Log(ctx).Fatal("runtime failure", zap.Error(err))
+		harness := runtime.NewWithCommands(aiProvider, frontend, frontend, commands)
+		err = frontend.Run(ctx, harness.Run)
+	} else {
+		frontend := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
+		_ = frontend.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
+		harness := runtime.NewWithCommands(aiProvider, frontend, frontend, commands)
+		err = harness.Run(ctx)
 	}
+	if err != nil && !errors.Is(err, context.Canceled) {
+		_, _ = fmt.Fprintf(os.Stderr, "runtime failed: %v\n", err)
+		logging.Log(ctx).Error("runtime failure", zap.Error(err))
+		return 1
+	}
+	return 0
 }

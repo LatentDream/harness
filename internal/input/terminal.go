@@ -38,18 +38,18 @@ func NewTerminal(reader io.Reader, writer io.Writer, errWriter io.Writer) *Termi
 	return terminal
 }
 
-func (t *Terminal) Receive(ctx context.Context) (string, error) {
+func (t *Terminal) Receive(ctx context.Context) (Submission, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return Submission{}, err
 	}
 	t.mu.Lock()
 	if err := t.hideStatus(); err != nil {
 		t.mu.Unlock()
-		return "", err
+		return Submission{}, err
 	}
 	if _, err := fmt.Fprint(t.writer, t.prompt); err != nil {
 		t.mu.Unlock()
-		return "", err
+		return Submission{}, err
 	}
 	t.mu.Unlock()
 
@@ -62,17 +62,17 @@ func (t *Terminal) Receive(ctx context.Context) (string, error) {
 	line, err := t.reader.ReadString('\n')
 	stopCancellation()
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return "", ctxErr
+		return Submission{}, ctxErr
 	}
 	if err != nil {
 		if errors.Is(err, io.EOF) && line != "" {
-			return trimLineEnding(line), nil
+			return Submission{Text: trimLineEnding(line), Mode: ModeBuild}, nil
 		}
 
-		return "", err
+		return Submission{}, err
 	}
 
-	return trimLineEnding(line), nil
+	return Submission{Text: trimLineEnding(line), Mode: ModeBuild}, nil
 }
 
 func (t *Terminal) Emit(_ context.Context, event Event) error {
