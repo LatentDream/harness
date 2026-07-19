@@ -68,6 +68,15 @@ func TestKeyDecoderUsesCtrlNForNewline(t *testing.T) {
 	}
 }
 
+func TestKeyDecoderUsesCtrlUAndCtrlDForPageNavigation(t *testing.T) {
+	var decoder keyDecoder
+	got := decoder.feed([]byte{0x15, 0x04})
+	want := []key{{kind: keyPageUp}, {kind: keyPageDown}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("keys = %#v, want %#v", got, want)
+	}
+}
+
 func TestKeyDecoderHandlesTerminalFocusReporting(t *testing.T) {
 	var decoder keyDecoder
 	got := decoder.feed([]byte("\x1b[O\x1b[I"))

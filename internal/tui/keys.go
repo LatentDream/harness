@@ -128,11 +128,17 @@ func (d *keyDecoder) feed(data []byte) []key {
 		case 0x03:
 			keys = append(keys, key{kind: keyCtrlC})
 			d.buffer = d.buffer[1:]
+		case 0x04:
+			keys = append(keys, key{kind: keyPageDown})
+			d.buffer = d.buffer[1:]
 		case 0x0e:
 			keys = append(keys, key{kind: keyNewline})
 			d.buffer = d.buffer[1:]
 		case 0x08, 0x7f:
 			keys = append(keys, key{kind: keyBackspace})
+			d.buffer = d.buffer[1:]
+		case 0x15:
+			keys = append(keys, key{kind: keyPageUp})
 			d.buffer = d.buffer[1:]
 		case 0x17:
 			keys = append(keys, key{kind: keyCtrlW})

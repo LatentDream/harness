@@ -76,10 +76,10 @@ func (m *model) renderHeader(width int) []string {
 		selection = "no provider"
 	}
 	modeText := "[BUILD]"
-	modeColor := ansiGreen
+	modeColor := ansiMagenta
 	if m.mode == input.ModePlan {
 		modeText = "[PLAN]"
-		modeColor = ansiMagenta
+		modeColor = ansiGreen
 	}
 	right := m.colors.wrap(modeColor+ansiBold, modeText)
 	plainLeft := " HARNESS  " + selection

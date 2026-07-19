@@ -16,7 +16,7 @@ changing terminal mode and exits with an actionable error when it is missing.
 | `Tab` | Switch between Build and Plan mode |
 | `@` | Open the repository file picker and insert `@relative/path` |
 | `/` or `:` | Open the command picker at the start of an empty prompt |
-| `PageUp` / `PageDown` | Scroll the transcript |
+| `PageUp` / `PageDown`, `Ctrl+U` / `Ctrl+D` | Scroll the transcript |
 | Arrow keys | Move through the editor |
 | `Alt+B` / `Alt+F` | Move by one word |
 | `Ctrl+W` | Delete the previous word |
