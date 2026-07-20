@@ -37,13 +37,22 @@ func LLMCall(
 
 	var response provider.Response
 	output := assistantOutput{ctx: callCtx, sink: sink, turnID: turnID, round: round}
-	callErr := WithStatus(callCtx, sink, input.Event{TurnID: turnID, Round: round, Text: "working..."}, func() error {
-		var sendErr error
-		response, sendErr = aiProvider.Send(callCtx, request, func(event provider.StreamEvent) error {
-			return output.delta(event.TextDelta)
-		})
-		return sendErr
+	if err := Emit(callCtx, sink, input.Event{Kind: input.EventInferenceStarted, TurnID: turnID, Round: round}); err != nil {
+		span.End(err, nil)
+		return provider.Response{}, errors.Join(err, tracing.Checkpoint(callCtx))
+	}
+	if err := tracing.Checkpoint(callCtx); err != nil {
+		endErr := Emit(callCtx, sink, input.Event{Kind: input.EventInferenceEnded, TurnID: turnID, Round: round})
+		span.End(err, nil)
+		return provider.Response{}, errors.Join(err, endErr, tracing.Checkpoint(callCtx))
+	}
+
+	response, callErr := aiProvider.Send(callCtx, request, func(event provider.StreamEvent) error {
+		return output.delta(event.TextDelta)
 	})
+	callErr = errors.Join(callErr, Emit(callCtx, sink, input.Event{
+		Kind: input.EventInferenceEnded, TurnID: turnID, Round: round,
+	}))
 	if callErr != nil {
 		abortErr := output.finish(input.EventAssistantAborted, output.text.String())
 		span.End(callErr, nil)

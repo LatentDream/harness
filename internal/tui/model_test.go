@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -35,12 +37,13 @@ func TestModelMarksAbortedStream(t *testing.T) {
 
 func TestModelResetsTranscriptForNewSession(t *testing.T) {
 	state := model{
-		blocks:       []transcriptBlock{{kind: blockUser, text: "/new"}},
-		streams:      map[streamKey]int{{turnID: "turn", round: 1}: 0},
-		status:       "working...",
-		notice:       "notice",
-		scrollOffset: 4,
-		editor:       editor{history: []string{"old prompt"}, historyIndex: 1},
+		blocks:             []transcriptBlock{{kind: blockUser, text: "/new"}},
+		streams:            map[streamKey]int{{turnID: "turn", round: 1}: 0},
+		status:             "working...",
+		notice:             "notice",
+		isInferenceRunning: true,
+		scrollOffset:       4,
+		editor:             editor{history: []string{"old prompt"}, historyIndex: 1},
 	}
 
 	state.apply(input.Event{Kind: input.EventSessionReset})
@@ -48,11 +51,204 @@ func TestModelResetsTranscriptForNewSession(t *testing.T) {
 	if len(state.blocks) != 0 || len(state.streams) != 0 {
 		t.Fatalf("session transcript was retained: blocks=%#v streams=%#v", state.blocks, state.streams)
 	}
-	if state.status != "" || state.notice != "" || state.scrollOffset != 0 {
+	if state.status != "" || state.notice != "" || state.scrollOffset != 0 || state.isInferenceRunning {
 		t.Fatalf("session presentation state was retained: %#v", state)
 	}
 	if len(state.editor.history) != 0 || state.editor.historyIndex != 0 {
 		t.Fatalf("session editor history was retained: %#v", state.editor)
+	}
+}
+
+func TestInferenceSpinnerIsIndependentFromStatus(t *testing.T) {
+	state := model{width: 40}
+	state.apply(input.Event{Kind: input.EventInferenceStarted})
+
+	if !state.isInferenceRunning {
+		t.Fatal("inference did not start")
+	}
+	if got := stripANSI(state.renderStatus(40)); got != " |" {
+		t.Fatalf("spinner-only status = %q", got)
+	}
+
+	state.apply(input.Event{Kind: input.EventStatus, Text: "Reading file sample.txt"})
+	if got := stripANSI(state.renderStatus(40)); got != " | Reading file sample.txt" {
+		t.Fatalf("combined inference status = %q", got)
+	}
+
+	state.apply(input.Event{Kind: input.EventInferenceEnded})
+	if got := stripANSI(state.renderStatus(40)); got != "   Reading file sample.txt" {
+		t.Fatalf("static tool status = %q", got)
+	}
+}
+
+func TestModelRendersDedicatedToolActivities(t *testing.T) {
+	workspace := t.TempDir()
+	state := model{
+		width: 80, workingDirectory: workspace,
+		streams: make(map[streamKey]int), tools: make(map[toolKey]int),
+	}
+	readPath := filepath.Join(workspace, "internal", "read.go")
+	writePath := filepath.Join(workspace, "internal", "write.go")
+
+	state.apply(input.Event{
+		Kind: input.EventToolStarted, TurnID: "turn", ToolCallID: "read-1", ToolName: "read",
+		ToolActivity: input.ToolActivity{Target: readPath},
+	})
+	state.apply(input.Event{
+		Kind: input.EventToolCompleted, TurnID: "turn", ToolCallID: "read-1", ToolName: "read",
+		ToolActivity: input.ToolActivity{Target: readPath},
+	})
+	state.apply(input.Event{
+		Kind: input.EventToolStarted, TurnID: "turn", ToolCallID: "write-1", ToolName: "write",
+		ToolActivity: input.ToolActivity{Target: writePath},
+	})
+	state.apply(input.Event{
+		Kind: input.EventToolCompleted, TurnID: "turn", ToolCallID: "write-1", ToolName: "write",
+		ToolActivity: input.ToolActivity{Target: writePath},
+	})
+	state.apply(input.Event{
+		Kind: input.EventToolStarted, TurnID: "turn", ToolCallID: "bash-1", ToolName: "bash",
+		ToolActivity: input.ToolActivity{Command: "go test ./..."},
+	})
+	state.apply(input.Event{
+		Kind: input.EventToolCompleted, TurnID: "turn", ToolCallID: "bash-1", ToolName: "bash",
+		ToolActivity: input.ToolActivity{Command: "go test ./...", Output: "ok package"},
+	})
+	state.apply(input.Event{Kind: input.EventAssistantStarted, TurnID: "turn", Round: 1})
+	state.apply(input.Event{Kind: input.EventAssistantDelta, TurnID: "turn", Round: 1, Text: "done"})
+	state.apply(input.Event{Kind: input.EventAssistantCompleted, TurnID: "turn", Round: 1, Text: "done"})
+
+	view := strings.Join(state.renderTranscript(80, 12), "\n")
+	for _, expected := range []string{
+		"› Read internal/read.go",
+		"› Wrote internal/write.go",
+		"› Bash $ go test ./...",
+		"  ok package",
+		"  ok package\n\nASSISTANT",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("tool transcript does not contain %q: %q", expected, view)
+		}
+	}
+	if len(state.tools) != 0 {
+		t.Fatalf("completed tools retained: %#v", state.tools)
+	}
+}
+
+func TestRenderAppliesMarginAndTitleCaseMode(t *testing.T) {
+	state := model{
+		width: 40, height: 8, mode: input.ModeBuild, ready: true,
+		provider: "codex", modelName: "test", workingDirectory: "/workspace",
+		streams: make(map[streamKey]int), tools: make(map[toolKey]int),
+	}
+
+	rendered := stripANSI(state.render())
+	lines := strings.Split(rendered, "\r\n")
+	for index, line := range lines {
+		line = strings.TrimPrefix(line, "\x1b[H")
+		line = strings.TrimPrefix(line, "\x1b[2K")
+		if !strings.HasPrefix(line, " ") {
+			t.Fatalf("line %d has no horizontal margin: %q", index, line)
+		}
+	}
+	if !strings.Contains(rendered, "[Build]") || strings.Contains(rendered, "[BUILD]") {
+		t.Fatalf("mode badge is not title-cased: %q", rendered)
+	}
+	if !strings.Contains(rendered, " "+strings.Repeat("-", 38)) {
+		t.Fatalf("separator does not respect margin: %q", rendered)
+	}
+
+	state.mode = input.ModePlan
+	rendered = stripANSI(state.render())
+	if !strings.Contains(rendered, "[Plan]") || strings.Contains(rendered, "[PLAN]") {
+		t.Fatalf("plan mode badge is not title-cased: %q", rendered)
+	}
+}
+
+func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
+	state := model{
+		width: 80, height: 16, mode: input.ModeBuild, ready: true,
+		provider: "codex", modelName: "test", workingDirectory: "/workspace",
+		streams: make(map[streamKey]int), tools: make(map[toolKey]int),
+	}
+
+	rendered := stripANSI(state.render())
+	for _, expected := range []string{
+		"╭─ Ready when you are",
+		"Start with a question, @ to find a file, or / for commands.",
+		"enter send  ·  ctrl+n newline  ·  tab mode",
+		"@ files  ·  / commands  ·  pgup scroll  ·  ctrl+c quit",
+		"╰─",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("welcome does not contain %q: %q", expected, rendered)
+		}
+	}
+
+	state.blocks = []transcriptBlock{{kind: blockUser, mode: input.ModeBuild, text: "hello"}}
+	rendered = stripANSI(state.render())
+	if strings.Contains(rendered, "Ready when you are") || strings.Contains(rendered, "ctrl+n newline") {
+		t.Fatalf("welcome remained after conversation started: %q", rendered)
+	}
+	lines := strings.Split(rendered, "\r\n")
+	if got := lines[len(lines)-1]; !strings.Contains(got, "[Build] >") {
+		t.Fatalf("persistent footer still follows input: %q", got)
+	}
+}
+
+func TestHeaderShowsClippedHomeRelativePathWithoutMode(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := model{
+		provider: "codex", modelName: "gpt-5.5",
+		workingDirectory: filepath.Join(home, "projects", "a-very-long-directory", "harness"),
+	}
+
+	header := state.renderHeader(42)
+	if len(header) != 2 || header[1] != "" {
+		t.Fatalf("header does not end with one blank row: %#v", header)
+	}
+	first := stripANSI(header[0])
+	if strings.Contains(first, "[Build]") || strings.Contains(first, "[Plan]") {
+		t.Fatalf("header still contains mode: %q", first)
+	}
+	if !strings.Contains(first, "…") || !strings.HasSuffix(first, "harness") {
+		t.Fatalf("header path did not preserve its tail: %q", first)
+	}
+	if displayWidth(header[0]) > 42 {
+		t.Fatalf("header width = %d, want at most 42", displayWidth(header[0]))
+	}
+}
+
+func TestDisplayWorkingDirectoryUsesHomeShortcut(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := displayWorkingDirectory(home); got != "~" {
+		t.Fatalf("home path = %q, want ~", got)
+	}
+	want := filepath.Join("~", "projects", "harness")
+	if got := displayWorkingDirectory(filepath.Join(home, "projects", "harness")); got != want {
+		t.Fatalf("nested home path = %q, want %q", got, want)
+	}
+}
+
+func TestUserBlockUsesConfiguredUsername(t *testing.T) {
+	state := model{username: "latent"}
+	label, _ := state.blockLabel(transcriptBlock{kind: blockUser, mode: input.ModeBuild})
+	if label != "latent  [Build]" {
+		t.Fatalf("user label = %q", label)
+	}
+}
+
+func TestModelDoesNotPersistUnsupportedTool(t *testing.T) {
+	state := model{}
+	state.apply(input.Event{Kind: input.EventToolStarted, ToolCallID: "glob-1", ToolName: "glob"})
+	if len(state.blocks) != 0 {
+		t.Fatalf("unsupported tool added transcript block: %#v", state.blocks)
 	}
 }
 
@@ -87,7 +283,7 @@ func TestRenderTranscriptClampsScrollOffsetAtFirstPage(t *testing.T) {
 	if state.scrollOffset != 5 {
 		t.Fatalf("scroll offset = %d, want 5", state.scrollOffset)
 	}
-	if got := strings.Join(view, "\n"); !strings.Contains(got, "YOU  BUILD\n  first") {
+	if got := strings.Join(view, "\n"); !strings.Contains(got, "YOU  [Build]\n  first") {
 		t.Fatalf("first transcript page is not visible: %q", got)
 	}
 
@@ -108,7 +304,7 @@ func TestRenderTranscriptDoesNotScrollShortTranscript(t *testing.T) {
 	if state.scrollOffset != 0 {
 		t.Fatalf("scroll offset = %d, want 0", state.scrollOffset)
 	}
-	if got := strings.Join(view, "\n"); !strings.Contains(got, "YOU  BUILD\n  only") {
+	if got := strings.Join(view, "\n"); !strings.Contains(got, "YOU  [Build]\n  only") {
 		t.Fatalf("short transcript is not visible: %q", got)
 	}
 }

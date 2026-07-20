@@ -211,3 +211,21 @@ func TestTerminalAbortsPartialAssistantResponseWithNewline(t *testing.T) {
 		t.Fatalf("expected partial response to be finalized, got %q", output.String())
 	}
 }
+
+func TestTerminalAcceptsActivityLifecycleEvents(t *testing.T) {
+	var output bytes.Buffer
+	terminal := NewTerminal(strings.NewReader(""), &output, io.Discard)
+	for _, event := range []Event{
+		{Kind: EventInferenceStarted},
+		{Kind: EventInferenceEnded},
+		{Kind: EventToolStarted, ToolName: "read"},
+		{Kind: EventToolCompleted, ToolName: "read"},
+	} {
+		if err := terminal.Emit(context.Background(), event); err != nil {
+			t.Fatalf("emit %#v: %v", event, err)
+		}
+	}
+	if output.Len() != 0 {
+		t.Fatalf("activity lifecycle changed terminal output: %q", output.String())
+	}
+}

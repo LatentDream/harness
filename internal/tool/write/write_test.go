@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"latentdream/harness/internal/tool/model"
 )
 
 func TestWriteToolCreatesFileAndParents(t *testing.T) {
@@ -91,6 +93,20 @@ func TestWriteToolStatusIncludesPath(t *testing.T) {
 	want := "Writing file " + filepath.Clean(path)
 	if got != want {
 		t.Fatalf("expected status %q, got %q", want, got)
+	}
+}
+
+func TestWriteToolPresentationExcludesContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.txt")
+	activity := New().(model.ActivityPresenter).Present(
+		writeArgs(t, path, "secret contents"), "Wrote file successfully.", nil,
+	)
+
+	if activity.Target != path {
+		t.Fatalf("activity target = %q, want %q", activity.Target, path)
+	}
+	if strings.Contains(activity.Target+activity.Command+activity.Output, "secret contents") {
+		t.Fatalf("activity leaked written content: %#v", activity)
 	}
 }
 

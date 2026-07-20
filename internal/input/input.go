@@ -38,6 +38,10 @@ const (
 	EventAssistantDelta     EventKind = "assistant.delta"
 	EventAssistantCompleted EventKind = "assistant.completed"
 	EventAssistantAborted   EventKind = "assistant.aborted"
+	EventInferenceStarted   EventKind = "inference.started"
+	EventInferenceEnded     EventKind = "inference.ended"
+	EventToolStarted        EventKind = "tool.started"
+	EventToolCompleted      EventKind = "tool.completed"
 	EventProviderSelection  EventKind = "provider.selection"
 	EventSessionReset       EventKind = "session.reset"
 )
@@ -50,11 +54,23 @@ const (
 )
 
 type Event struct {
-	Kind     EventKind `json:"kind"`
-	TurnID   string    `json:"turnId,omitempty"`
-	Round    int       `json:"round,omitempty"`
-	Stream   Stream    `json:"stream,omitempty"`
-	Text     string    `json:"text,omitempty"`
-	Provider string    `json:"provider,omitempty"`
-	Model    string    `json:"model,omitempty"`
+	Kind         EventKind    `json:"kind"`
+	TurnID       string       `json:"turnId,omitempty"`
+	Round        int          `json:"round,omitempty"`
+	Stream       Stream       `json:"stream,omitempty"`
+	Text         string       `json:"text,omitempty"`
+	Provider     string       `json:"provider,omitempty"`
+	Model        string       `json:"model,omitempty"`
+	ToolCallID   string       `json:"toolCallId,omitempty"`
+	ToolName     string       `json:"toolName,omitempty"`
+	ToolActivity ToolActivity `json:"toolActivity,omitempty"`
+}
+
+// ToolActivity contains presentation-safe tool metadata. It must not contain
+// raw arguments because those may include file contents or other large values.
+type ToolActivity struct {
+	Target  string `json:"target,omitempty"`
+	Command string `json:"command,omitempty"`
+	Output  string `json:"output,omitempty"`
+	Error   string `json:"error,omitempty"`
 }

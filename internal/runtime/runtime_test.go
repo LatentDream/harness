@@ -181,6 +181,15 @@ func TestRunAbortsPartialAssistantOutputOnProviderError(t *testing.T) {
 	if assistantEvents[2].Text != "partial" {
 		t.Fatalf("expected aborted event to retain partial text, got %#v", assistantEvents[2])
 	}
+	var inferenceKinds []input.EventKind
+	for _, event := range userInput.events {
+		if event.Kind == input.EventInferenceStarted || event.Kind == input.EventInferenceEnded {
+			inferenceKinds = append(inferenceKinds, event.Kind)
+		}
+	}
+	if want := []input.EventKind{input.EventInferenceStarted, input.EventInferenceEnded}; !reflect.DeepEqual(inferenceKinds, want) {
+		t.Fatalf("expected inference cleanup %#v, got %#v", want, inferenceKinds)
+	}
 }
 
 func TestRunPlanModeUsesReadOnlyToolsAndEphemeralInstruction(t *testing.T) {
@@ -414,9 +423,28 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if !reflect.DeepEqual(userInput.responses, []string{"read complete"}) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}
-	expectedStatuses := []string{"working...", "", "Reading file " + path, "", "working...", ""}
+	expectedStatuses := []string{"Reading file " + path, ""}
 	if !reflect.DeepEqual(userInput.statuses, expectedStatuses) {
 		t.Fatalf("expected statuses %#v, got %#v", expectedStatuses, userInput.statuses)
+	}
+	expectedKinds := []input.EventKind{
+		input.EventInferenceStarted,
+		input.EventInferenceEnded,
+		input.EventToolStarted,
+		input.EventStatus,
+		input.EventStatus,
+		input.EventToolCompleted,
+		input.EventInferenceStarted,
+		input.EventAssistantStarted,
+		input.EventAssistantDelta,
+		input.EventInferenceEnded,
+		input.EventAssistantCompleted,
+	}
+	if got := eventKinds(userInput.events); !reflect.DeepEqual(got, expectedKinds) {
+		t.Fatalf("expected event kinds %#v, got %#v", expectedKinds, got)
+	}
+	if activity := userInput.events[2].ToolActivity; activity.Target != path {
+		t.Fatalf("read activity target = %q, want %q", activity.Target, path)
 	}
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
@@ -783,6 +811,14 @@ func toolNames(definitions []llm.ToolDefinition) []string {
 		names = append(names, definition.Name)
 	}
 	return names
+}
+
+func eventKinds(events []input.Event) []input.EventKind {
+	kinds := make([]input.EventKind, len(events))
+	for index, event := range events {
+		kinds[index] = event.Kind
+	}
+	return kinds
 }
 
 func (f *fakeProvider) Current() provider.Selection {

@@ -65,6 +65,14 @@ func (writeTool) Status(args json.RawMessage) string {
 	return "Writing file " + params.filePath
 }
 
+func (writeTool) Present(args json.RawMessage, _ string, _ error) model.Activity {
+	params, err := decodeWriteParams(args)
+	if err != nil {
+		return model.Activity{}
+	}
+	return model.Activity{Target: params.filePath}
+}
+
 func (writeTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	params, err := decodeWriteParams(args)
 	if err != nil {

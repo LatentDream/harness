@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool/model"
@@ -22,6 +23,8 @@ const (
 	defaultTimeoutSeconds = 30
 	maxTimeoutSeconds     = 120
 	maxOutputBytes        = 64 * 1024
+	maxActivityBytes      = 4 * 1024
+	maxActivityLines      = 8
 )
 
 //go:embed bash.txt
@@ -84,6 +87,20 @@ func (bashTool) Status(args json.RawMessage) string {
 		return "Running bash command"
 	}
 	return "Running bash command: " + params.command
+}
+
+func (bashTool) Present(args json.RawMessage, result string, executionErr error) model.Activity {
+	var values struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(args, &values); err != nil {
+		return model.Activity{}
+	}
+	activity := model.Activity{Command: strings.TrimSpace(values.Command)}
+	if result != "" && executionErr == nil {
+		activity.Output = summarizeOutput(result)
+	}
+	return activity
 }
 
 func (tool bashTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
@@ -250,4 +267,60 @@ func truncateOutput(value string) (string, bool) {
 		return value, false
 	}
 	return value[:maxOutputBytes], true
+}
+
+func summarizeOutput(result string) string {
+	exitCode := extractElement(result, "exitCode")
+	stdout := extractElement(result, "stdout")
+	stderr := extractElement(result, "stderr")
+	timedOut := extractElement(result, "timedOut") == "true"
+
+	lines := make([]string, 0, 4)
+	if timedOut {
+		lines = append(lines, "timed out")
+	} else if exitCode != "" && exitCode != "0" {
+		lines = append(lines, "exit code "+exitCode)
+	}
+	if stdout != "" {
+		lines = append(lines, stdout)
+	}
+	if stderr != "" {
+		lines = append(lines, "stderr:", stderr)
+	}
+	return cropActivity(strings.Join(lines, "\n"))
+}
+
+func extractElement(value, name string) string {
+	startMarker := "<" + name + ">"
+	endMarker := "</" + name + ">"
+	start := strings.Index(value, startMarker)
+	end := strings.LastIndex(value, endMarker)
+	if start < 0 || end < start {
+		return ""
+	}
+	start += len(startMarker)
+	return strings.TrimSpace(value[start:end])
+}
+
+func cropActivity(value string) string {
+	value = strings.ToValidUTF8(value, "?")
+	truncated := false
+	if len(value) > maxActivityBytes {
+		end := maxActivityBytes
+		for end > 0 && !utf8.ValidString(value[:end]) {
+			end--
+		}
+		value = value[:end]
+		truncated = true
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) > maxActivityLines {
+		lines = lines[:maxActivityLines]
+		truncated = true
+	}
+	value = strings.TrimRight(strings.Join(lines, "\n"), "\n")
+	if truncated {
+		value += "\n... output cropped ..."
+	}
+	return value
 }

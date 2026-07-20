@@ -72,6 +72,14 @@ func (readTool) Status(args json.RawMessage) string {
 	return "Reading file " + params.filePath
 }
 
+func (readTool) Present(args json.RawMessage, _ string, _ error) model.Activity {
+	params, err := decodeReadParams(args)
+	if err != nil {
+		return model.Activity{}
+	}
+	return model.Activity{Target: params.filePath}
+}
+
 func (readTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	params, err := decodeReadParams(args)
 	if err != nil {

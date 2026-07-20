@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"latentdream/harness/internal/tool/model"
 )
 
 func TestBashToolRunsCommand(t *testing.T) {
@@ -134,6 +137,29 @@ func TestBashToolStatusIncludesCommand(t *testing.T) {
 	want := "Running bash command: echo hello"
 	if got != want {
 		t.Fatalf("expected status %q, got %q", want, got)
+	}
+}
+
+func TestBashActivitySummarizesAndCropsOutput(t *testing.T) {
+	longOutput := strings.Repeat("line\n", maxActivityLines+3)
+	result := formatOutput(bashParams{command: "test", workingDirectory: t.TempDir()}, 2, false, longOutput, "warning")
+	activity := New().(model.ActivityPresenter).Present(json.RawMessage(`{"command":"test"}`), result, nil)
+
+	if activity.Command != "test" {
+		t.Fatalf("activity command = %q", activity.Command)
+	}
+	if !strings.Contains(activity.Output, "exit code 2") || !strings.Contains(activity.Output, "... output cropped ...") {
+		t.Fatalf("unexpected activity output: %q", activity.Output)
+	}
+	if got := len(strings.Split(activity.Output, "\n")); got > maxActivityLines+1 {
+		t.Fatalf("activity output has %d lines", got)
+	}
+}
+
+func TestCropActivityPreservesValidUTF8(t *testing.T) {
+	value := strings.Repeat("界", maxActivityBytes)
+	if got := cropActivity(value); !utf8.ValidString(got) {
+		t.Fatalf("cropped activity is invalid UTF-8: %q", got)
 	}
 }
 

@@ -176,9 +176,13 @@ Initial event kinds are:
 is recorded as `assistant.started`, one or more `assistant.delta` events, and
 `assistant.completed` or `assistant.aborted`. These events carry the turn ID and
 LLM round so a terminal or server can reconstruct concurrent presentation
-lifecycles. Status changes and complete stdout or stderr records use the same
-schema. Events are recorded only after the frontend accepts them; the aggregate
-`assistant.message` event remains the canonical conversation value.
+lifecycles. Provider calls also emit `inference.started` and `inference.ended`,
+and tool calls emit presentation-level `tool.started` and `tool.completed`
+events correlated by tool-call ID. Tool presentation payloads contain only safe,
+bounded display metadata rather than raw arguments or results. Status changes
+and complete stdout or stderr records use the same schema. Events are recorded
+only after the frontend accepts them; the aggregate `assistant.message` event
+remains the canonical conversation value.
 
 Paired start and end events preserve incomplete operations when a process exits
 unexpectedly. Sequence numbers describe commit order in the trace, while span

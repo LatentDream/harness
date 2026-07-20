@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type Options struct {
 	Provider         string
 	Model            string
 	WorkingDirectory string
+	Username         string
 	Commands         *command.Registry
 	Models           []provider.Selection
 }
@@ -45,6 +47,9 @@ const (
 	blockAssistant
 	blockOutput
 	blockError
+	blockToolRead
+	blockToolWrite
+	blockToolBash
 )
 
 type transcriptBlock struct {
@@ -54,6 +59,8 @@ type transcriptBlock struct {
 	turnID      string
 	round       int
 	interrupted bool
+	activity    input.ToolActivity
+	completed   bool
 }
 
 type streamKey struct {
@@ -61,23 +68,31 @@ type streamKey struct {
 	round  int
 }
 
+type toolKey struct {
+	turnID string
+	callID string
+}
+
 type model struct {
-	width            int
-	height           int
-	provider         string
-	modelName        string
-	workingDirectory string
-	mode             input.Mode
-	focused          bool
-	ready            bool
-	status           string
-	notice           string
-	spinner          int
-	scrollOffset     int
-	colors           palette
-	editor           editor
-	blocks           []transcriptBlock
-	streams          map[streamKey]int
+	width              int
+	height             int
+	provider           string
+	modelName          string
+	workingDirectory   string
+	username           string
+	mode               input.Mode
+	focused            bool
+	ready              bool
+	isInferenceRunning bool
+	status             string
+	notice             string
+	spinner            int
+	scrollOffset       int
+	colors             palette
+	editor             editor
+	blocks             []transcriptBlock
+	streams            map[streamKey]int
+	tools              map[toolKey]int
 }
 
 type readResult struct {
@@ -94,6 +109,11 @@ func New(in, out, errOut *os.File, options Options) (*UI, error) {
 	}
 	if options.WorkingDirectory == "" {
 		options.WorkingDirectory, _ = os.Getwd()
+	}
+	if options.Username == "" {
+		if current, err := user.Current(); err == nil {
+			options.Username = current.Username
+		}
 	}
 	terminal := newNativeTerminal(in, out)
 	ui := &UI{
@@ -181,10 +201,12 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 		provider:         u.options.Provider,
 		modelName:        u.options.Model,
 		workingDirectory: u.options.WorkingDirectory,
+		username:         u.options.Username,
 		mode:             input.ModeBuild,
 		focused:          true,
 		colors:           palette{enabled: os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"},
 		streams:          make(map[streamKey]int),
+		tools:            make(map[toolKey]int),
 	}
 	state.editor.historyIndex = 0
 	if err := u.draw(&state); err != nil {
@@ -227,6 +249,7 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 			return err
 		case <-u.ready:
 			state.ready = true
+			state.isInferenceRunning = false
 			state.status = ""
 			if err := u.draw(&state); err != nil {
 				return err
@@ -304,7 +327,7 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 					return context.Canceled
 				}
 			}
-			if state.status != "" {
+			if state.isInferenceRunning {
 				state.spinner++
 				if err := u.draw(&state); err != nil {
 					return err
@@ -369,6 +392,32 @@ func (m *model) apply(event input.Event) {
 	switch event.Kind {
 	case input.EventStatus:
 		m.status = event.Text
+	case input.EventInferenceStarted:
+		m.isInferenceRunning = true
+	case input.EventInferenceEnded:
+		m.isInferenceRunning = false
+	case input.EventToolStarted:
+		kind, ok := displayedToolKind(event.ToolName)
+		if !ok {
+			break
+		}
+		block := transcriptBlock{
+			kind: kind, turnID: event.TurnID, activity: event.ToolActivity,
+		}
+		m.blocks = append(m.blocks, block)
+		if m.tools == nil {
+			m.tools = make(map[toolKey]int)
+		}
+		m.tools[toolKey{turnID: event.TurnID, callID: event.ToolCallID}] = len(m.blocks) - 1
+		m.scrollOffset = 0
+	case input.EventToolCompleted:
+		key := toolKey{turnID: event.TurnID, callID: event.ToolCallID}
+		if index, ok := m.tools[key]; ok {
+			m.blocks[index].activity = event.ToolActivity
+			m.blocks[index].completed = true
+			delete(m.tools, key)
+			m.scrollOffset = 0
+		}
 	case input.EventOutput:
 		kind := blockOutput
 		if event.Stream == input.StreamStderr || strings.HasPrefix(strings.ToLower(event.Text), "error:") {
@@ -412,11 +461,26 @@ func (m *model) apply(event input.Event) {
 	case input.EventSessionReset:
 		m.blocks = nil
 		m.streams = make(map[streamKey]int)
+		m.tools = make(map[toolKey]int)
+		m.isInferenceRunning = false
 		m.status = ""
 		m.notice = ""
 		m.scrollOffset = 0
 		m.editor.history = nil
 		m.editor.historyIndex = 0
+	}
+}
+
+func displayedToolKind(name string) (blockKind, bool) {
+	switch name {
+	case "read":
+		return blockToolRead, true
+	case "write":
+		return blockToolWrite, true
+	case "bash":
+		return blockToolBash, true
+	default:
+		return 0, false
 	}
 }
 
