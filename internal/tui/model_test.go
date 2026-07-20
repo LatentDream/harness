@@ -154,7 +154,7 @@ func TestRenderAppliesMarginAndTitleCaseMode(t *testing.T) {
 	if !strings.Contains(rendered, "[Build]") || strings.Contains(rendered, "[BUILD]") {
 		t.Fatalf("mode badge is not title-cased: %q", rendered)
 	}
-	if !strings.Contains(rendered, " "+strings.Repeat("-", 38)) {
+	if !strings.Contains(rendered, " "+strings.Repeat("─", 38)) {
 		t.Fatalf("separator does not respect margin: %q", rendered)
 	}
 
@@ -173,6 +173,9 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 	}
 
 	rendered := stripANSI(state.render())
+	if strings.Contains(rendered, "Tip:") {
+		t.Fatalf("input tip is visible alongside welcome: %q", rendered)
+	}
 	for _, expected := range []string{
 		"╭─ Ready when you are",
 		"Start with a question, @ to find a file, or / for commands.",
@@ -190,6 +193,9 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 	if strings.Contains(rendered, "Ready when you are") || strings.Contains(rendered, "ctrl+n newline") {
 		t.Fatalf("welcome remained after conversation started: %q", rendered)
 	}
+	if !strings.Contains(rendered, inputTips[0]) {
+		t.Fatalf("input tip did not replace dismissed welcome: %q", rendered)
+	}
 	lines := strings.Split(rendered, "\r\n")
 	if got := lines[len(lines)-1]; !strings.Contains(got, "[Build] >") {
 		t.Fatalf("persistent footer still follows input: %q", got)
@@ -197,7 +203,10 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 }
 
 func TestInputUsesStableTipPlaceholder(t *testing.T) {
-	state := model{mode: input.ModeBuild, focused: true, tip: "Tip: @ searches project files"}
+	state := model{
+		mode: input.ModeBuild, focused: true, tip: "Tip: @ searches project files",
+		blocks: []transcriptBlock{{kind: blockUser, text: "hello"}},
+	}
 	first := strings.Join(state.renderInput(60), "\n")
 	second := strings.Join(state.renderInput(60), "\n")
 	if first != second {

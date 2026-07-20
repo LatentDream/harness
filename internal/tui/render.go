@@ -280,19 +280,23 @@ func (m *model) renderInput(width int) []string {
 		accent = ansiMagenta
 		mode = "[Plan]"
 	}
-	separator := strings.Repeat("-", width)
+	separator := strings.Repeat("─", width)
 	lines := []string{m.colors.wrap(ansiDim+accent, separator)}
 	prefix := mode + " > "
 	contentWidth := max(1, width-displayWidth(prefix)-1)
 	runes, cursor := sanitizeEditor([]rune(m.editor.value()), m.editor.cursor)
 	wrapped := renderEditorLines(runes, cursor, contentWidth, m.focused)
-	placeholder := m.tip
-	if placeholder == "" {
-		placeholder = inputTips[0]
+	placeholder := ""
+	if len(m.blocks) > 0 {
+		placeholder = m.tip
+		if placeholder == "" {
+			placeholder = inputTips[0]
+		}
 	}
 	if len(wrapped) == 0 {
-		wrapped = []string{cursorMarker(nil, 0, m.focused) + m.colors.wrap(ansiDim+ansiGray, " "+placeholder)}
-	} else if len(runes) == 0 {
+		wrapped = []string{cursorMarker(nil, 0, m.focused)}
+	}
+	if len(runes) == 0 && placeholder != "" {
 		wrapped[0] += m.colors.wrap(ansiDim+ansiGray, " "+placeholder)
 	}
 	if len(wrapped) > 6 {
