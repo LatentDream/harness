@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -13,6 +14,7 @@ type Action int
 const (
 	ActionContinue Action = iota
 	ActionExit
+	ActionNewSession
 )
 
 type Result struct {
@@ -36,11 +38,12 @@ type Entry struct {
 }
 
 type Registry struct {
+	mu       sync.RWMutex
 	commands map[string]Command
 }
 
 func DefaultRegistry() *Registry {
-	r := NewRegistry(newExitCmd())
+	r := NewRegistry(newExitCmd(), newNewCmd())
 	r.Register(newHelpCmd(r))
 	return r
 }
@@ -57,6 +60,8 @@ func (r *Registry) Register(cmd Command) {
 	if cmd == nil {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.commands == nil {
 		r.commands = make(map[string]Command)
 	}
@@ -101,12 +106,19 @@ func (r *Registry) IsCommand(input string) Command {
 	if name == "" || r == nil {
 		return nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return r.commands[normalize(name)]
 }
 
 // Entries returns command descriptions sorted by command name.
 func (r *Registry) Entries() []Entry {
-	if r == nil || len(r.commands) == 0 {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.commands) == 0 {
 		return nil
 	}
 

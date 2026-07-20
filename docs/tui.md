@@ -34,6 +34,13 @@ being submitted.
 
 Mode instructions are request-local and are not added to conversation history.
 
+## Commands
+
+- `:new` or `/new` closes the current persisted session and starts a fresh one.
+  Conversation history and the TUI transcript are cleared, while the selected
+  provider and model remain active.
+- `:help` or `/help` lists all available commands.
+
 ## Pickers
 
 The file picker uses tracked and unignored files from `git ls-files`. Outside a

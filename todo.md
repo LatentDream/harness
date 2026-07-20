@@ -6,7 +6,7 @@
 - [x] `:copy` `/copy` to copy the latest message to the clipboard
 - [x] keyboard shortcuts with ctrl+x y (for to copy the latest message to the clipboard)
 - [x] `:model` and `/model` command to switch models of the current provider
-- [ ] `:new` `/new` to create a new session
+- [x] `:new` `/new` to create a new session
 - [ ] `:compact`` `/compact` to compact the session (remove the bloat - let the agent say what it wants to keep and discard the rest)
 - [ ] Add a permission system to allow agent to ask for permission some commands (e.g. rm)
 - [ ] Add a chat mode, where the agent doesn't have any tools

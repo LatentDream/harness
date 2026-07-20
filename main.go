@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"latentdream/harness/internal/config"
@@ -41,13 +43,8 @@ func run() int {
 	}
 
 	sessionID := uuid.NewString()
-	if cfg.Logging.InitialFields == nil {
-		cfg.Logging.InitialFields = map[string]any{}
-	}
-	cfg.Logging.InitialFields["sessionId"] = sessionID
-	logging.ConfigureOrExitForSession(cfg.Logging, sessionID)
-
-	ctx = tracing.Init(ctx, tracing.LogRecorder(cfg.Tracing.FilePath, sessionID))
+	loggingConfig := loggingConfigForSession(cfg.Logging, sessionID)
+	logging.ConfigureOrExitForSession(loggingConfig, sessionID)
 
 	aiProvider, err := provider.New(cfg.Providers)
 	if err != nil {
@@ -75,14 +72,14 @@ func run() int {
 			return 1
 		}
 
-		harness := runtime.New(aiProvider, frontend, frontend, runtimeOptions)
-		err = frontend.Run(ctx, harness.Run)
+		err = frontend.Run(ctx, func(runCtx context.Context) error {
+			return runSessions(runCtx, cfg, sessionID, aiProvider, frontend, frontend, runtimeOptions)
+		})
 
 	} else {
 		frontend := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
 		_ = frontend.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
-		harness := runtime.New(aiProvider, frontend, frontend, runtimeOptions)
-		err = harness.Run(ctx)
+		err = runSessions(ctx, cfg, sessionID, aiProvider, frontend, frontend, runtimeOptions)
 	}
 
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -91,4 +88,60 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+func runSessions(
+	ctx context.Context,
+	cfg config.Config,
+	sessionID string,
+	aiProvider provider.Provider,
+	receiver input.Receiver,
+	output input.Sink,
+	options runtime.Options,
+) error {
+	first := true
+	for {
+		if !first {
+			_ = logging.Sync()
+			sessionID = uuid.NewString()
+			loggingConfig := loggingConfigForSession(cfg.Logging, sessionID)
+			if loggingConfig.Output == logging.OutputFile && !strings.Contains(loggingConfig.FilePath, logging.SessionIDPlaceholder) {
+				loggingConfig.FilePath = sessionScopedPath(loggingConfig.FilePath, sessionID)
+			}
+			if err := logging.ConfigureForSession(loggingConfig, sessionID); err != nil {
+				return fmt.Errorf("configure session logging: %w", err)
+			}
+		}
+
+		tracePath := cfg.Tracing.FilePath
+		if !first && !strings.Contains(tracePath, logging.SessionIDPlaceholder) {
+			tracePath = sessionScopedPath(tracePath, sessionID)
+		}
+		sessionCtx := tracing.Init(ctx, tracing.LogRecorder(tracePath, sessionID))
+		options.ResetFrontend = !first
+		harness := runtime.New(aiProvider, receiver, output, options)
+		action, err := harness.RunSession(sessionCtx)
+		if err != nil {
+			return err
+		}
+		if action != command.ActionNewSession {
+			return nil
+		}
+		first = false
+	}
+}
+
+func loggingConfigForSession(cfg logging.Config, sessionID string) logging.Config {
+	fields := make(map[string]any, len(cfg.InitialFields)+1)
+	for key, value := range cfg.InitialFields {
+		fields[key] = value
+	}
+	fields["sessionId"] = sessionID
+	cfg.InitialFields = fields
+	return cfg
+}
+
+func sessionScopedPath(path string, sessionID string) string {
+	directory, name := filepath.Split(path)
+	return filepath.Join(directory, sessionID, name)
 }

@@ -32,6 +32,7 @@ const (
 	EventAssistantCompleted EventKind = "assistant.completed"
 	EventAssistantAborted   EventKind = "assistant.aborted"
 	EventProviderSelection  EventKind = "provider.selection"
+	EventSessionReset       EventKind = "session.reset"
 )
 
 type Stream string

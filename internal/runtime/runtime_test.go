@@ -13,6 +13,7 @@ import (
 
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/provider"
+	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool/model"
@@ -234,6 +235,26 @@ func TestRunTracesCommandSubmissionMode(t *testing.T) {
 	payload, ok := recorder.run.events[0].Payload.(tracing.UserInputPayload)
 	if !ok || payload.Mode != input.ModePlan {
 		t.Fatalf("command mode was not traced: %#v", recorder.run.events[0].Payload)
+	}
+}
+
+func TestRunSessionReturnsNewSessionAction(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "/new"}}}
+	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
+	runtime := New(&fakeProvider{}, userInput, userInput, Options{})
+
+	action, err := runtime.RunSession(tracing.Init(context.Background(), recorder))
+	if err != nil {
+		t.Fatalf("start new session: %v", err)
+	}
+	if action != command.ActionNewSession {
+		t.Fatalf("expected new-session action, got %d", action)
+	}
+	if recorder.run.outcome.Status != tracing.StatusSuccess || recorder.run.outcome.Reason != tracing.EndReasonNewSession {
+		t.Fatalf("unexpected run outcome: %#v", recorder.run.outcome)
+	}
+	if recorder.run.snapshots != 2 {
+		t.Fatalf("expected initial and final snapshots, got %d", recorder.run.snapshots)
 	}
 }
 
@@ -522,7 +543,7 @@ func TestRunWritesHelpWithoutProviderCall(t *testing.T) {
 	if len(aiProvider.queries) != 0 {
 		t.Fatalf("expected no provider calls, got %d", len(aiProvider.queries))
 	}
-	expectedHelp := "Available commands:\n  :copy, /copy - copy latest message to clipboard\n  :q, /exit, /quit - exit harness\n  :help, /help - show available commands\n  :model, /model - switch provider/model"
+	expectedHelp := "Available commands:\n  :copy, /copy - copy latest message to clipboard\n  :q, /exit, /quit - exit harness\n  :help, /help - show available commands\n  :model, /model - switch provider/model\n  :new, /new - start a new session"
 	if !reflect.DeepEqual(userInput.responses, []string{expectedHelp}) {
 		t.Fatalf("unexpected responses: %#v", userInput.responses)
 	}

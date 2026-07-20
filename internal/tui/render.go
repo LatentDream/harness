@@ -169,9 +169,9 @@ func (m *model) renderInput(width int) []string {
 	runes, cursor := sanitizeEditor([]rune(m.editor.value()), m.editor.cursor)
 	wrapped := renderEditorLines(runes, cursor, contentWidth, m.focused)
 	if len(wrapped) == 0 {
-		wrapped = []string{cursorMarker(nil, 0, m.focused) + m.colors.wrap(ansiDim+ansiGray, "  Ask anything")}
+		wrapped = []string{cursorMarker(nil, 0, m.focused) + m.colors.wrap(ansiDim+ansiGray, " Ask anything")}
 	} else if len(runes) == 0 {
-		wrapped[0] += m.colors.wrap(ansiDim+ansiGray, "  Ask anything")
+		wrapped[0] += m.colors.wrap(ansiDim+ansiGray, " Ask anything")
 	}
 	if len(wrapped) > 6 {
 		wrapped = wrapped[len(wrapped)-6:]

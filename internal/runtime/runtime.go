@@ -39,11 +39,13 @@ type Runtime struct {
 	output    input.Sink
 	commands  *command.Registry
 	clipboard command.Clipboard
+	resetUI   bool
 }
 
 type Options struct {
-	Commands  *command.Registry
-	Clipboard command.Clipboard
+	Commands      *command.Registry
+	Clipboard     command.Clipboard
+	ResetFrontend bool
 }
 
 func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, options Options) *Runtime {
@@ -61,6 +63,7 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 		output:    output,
 		commands:  options.Commands,
 		clipboard: options.Clipboard,
+		resetUI:   options.ResetFrontend,
 	}
 	r.commands.Register(command.NewCopyCmd(r.latestCopyableMessage, r.clipboard))
 	r.commands.Register(command.NewModelCmd(r.Provider))
@@ -68,78 +71,96 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 }
 
 func (r *Runtime) Run(ctx context.Context) (runErr error) {
+	_, runErr = r.RunSession(ctx)
+	return runErr
+}
+
+// RunSession runs one persisted session and reports the command that ended it.
+func (r *Runtime) RunSession(ctx context.Context) (action command.Action, runErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	workingDirectory, _ := os.Getwd()
 	ctx, trace, err := tracing.BeginRun(ctx, tracing.RunMeta{WorkingDirectory: workingDirectory})
 	if err != nil {
-		return fmt.Errorf("start trace: %w", err)
+		return command.ActionContinue, fmt.Errorf("start trace: %w", err)
 	}
 	defer trace.End(&runErr, r.sessionState)
 
 	if err := r.initialize(); err != nil {
-		return err
+		return command.ActionContinue, err
 	}
 	trace.Snapshot(r.sessionState())
 	if err := trace.Checkpoint(); err != nil {
-		return err
+		return command.ActionContinue, err
+	}
+	if r.resetUI {
+		if err := execution.Emit(ctx, r.output, input.Event{Kind: input.EventSessionReset}); err != nil {
+			return command.ActionContinue, fmt.Errorf("reset session frontend: %w", err)
+		}
+		if err := trace.Checkpoint(); err != nil {
+			return command.ActionContinue, err
+		}
 	}
 
 	return r.runLoop(ctx, trace)
 }
 
-func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) error {
+func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) (command.Action, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			trace.SetReason(tracing.EndReasonCancelled)
-			return ctx.Err()
+			return command.ActionContinue, ctx.Err()
 		default:
 		}
 
 		submission, err := r.receiver.Receive(ctx)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			trace.SetReason(tracing.EndReasonCancelled)
-			return err
+			return command.ActionContinue, err
 		}
 		if errors.Is(err, io.EOF) {
 			trace.SetReason(tracing.EndReasonEOF)
-			return nil
+			return command.ActionContinue, nil
 		}
 		if err != nil {
 			operationErr := fmt.Errorf("receive input: %w", err)
-			return errors.Join(operationErr, execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error()), tracing.Checkpoint(ctx))
+			return command.ActionContinue, errors.Join(operationErr, execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error()), tracing.Checkpoint(ctx))
 		}
 
 		submission.Mode, err = normalizeMode(submission.Mode)
 		if err != nil {
 			operationErr := fmt.Errorf("receive input: %w", err)
-			return errors.Join(operationErr, execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error()), tracing.Checkpoint(ctx))
+			return command.ActionContinue, errors.Join(operationErr, execution.Write(ctx, r.output, input.StreamStderr, operationErr.Error()), tracing.Checkpoint(ctx))
 		}
 		text := submission.Text
 		commandText := strings.TrimSpace(text)
 		if commandText == "" {
 			execution.UserInput(ctx, "", text, submission.Mode)
 			if err := tracing.Checkpoint(ctx); err != nil {
-				return err
+				return command.ActionContinue, err
 			}
 			continue
 		}
 		if r.isCommand(commandText) {
 			action, err := r.handleCommand(ctx, text, commandText, submission.Mode)
 			if err != nil {
-				return err
+				return command.ActionContinue, err
 			}
 			if action == command.ActionExit {
 				trace.SetReason(tracing.EndReasonExit)
-				return nil
+				return action, nil
+			}
+			if action == command.ActionNewSession {
+				trace.SetReason(tracing.EndReasonNewSession)
+				return action, nil
 			}
 			continue
 		}
 
 		if err := r.handleTurn(ctx, submission); err != nil {
-			return err
+			return command.ActionContinue, err
 		}
 	}
 }

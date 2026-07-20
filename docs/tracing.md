@@ -58,7 +58,7 @@ events rather than embedded repeatedly.
 
 Each turn records success, failure, or cancellation, an optional structured
 error, and its final answer. The run records why the interactive session ended:
-EOF, an exit command, cancellation, or a fatal error.
+EOF, an exit command, a new-session command, cancellation, or a fatal error.
 
 ## API
 

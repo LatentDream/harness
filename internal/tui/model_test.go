@@ -32,6 +32,29 @@ func TestModelMarksAbortedStream(t *testing.T) {
 	}
 }
 
+func TestModelResetsTranscriptForNewSession(t *testing.T) {
+	state := model{
+		blocks:       []transcriptBlock{{kind: blockUser, text: "/new"}},
+		streams:      map[streamKey]int{{turnID: "turn", round: 1}: 0},
+		status:       "working...",
+		notice:       "notice",
+		scrollOffset: 4,
+		editor:       editor{history: []string{"old prompt"}, historyIndex: 1},
+	}
+
+	state.apply(input.Event{Kind: input.EventSessionReset})
+
+	if len(state.blocks) != 0 || len(state.streams) != 0 {
+		t.Fatalf("session transcript was retained: blocks=%#v streams=%#v", state.blocks, state.streams)
+	}
+	if state.status != "" || state.notice != "" || state.scrollOffset != 0 {
+		t.Fatalf("session presentation state was retained: %#v", state)
+	}
+	if len(state.editor.history) != 0 || state.editor.historyIndex != 0 {
+		t.Fatalf("session editor history was retained: %#v", state.editor)
+	}
+}
+
 func TestRendererSanitizesUntrustedEscapeSequences(t *testing.T) {
 	state := model{
 		width: 60, height: 12, mode: input.ModeBuild, ready: true,

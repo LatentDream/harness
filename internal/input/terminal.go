@@ -112,7 +112,7 @@ func (t *Terminal) Emit(_ context.Context, event Event) error {
 		}
 		t.streaming = false
 		return t.showStatus()
-	case EventProviderSelection:
+	case EventProviderSelection, EventSessionReset:
 		return nil
 	default:
 		return fmt.Errorf("unsupported input event kind %q", event.Kind)

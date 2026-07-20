@@ -64,6 +64,31 @@ func TestRegistryExecutesDefaultExitCommand(t *testing.T) {
 	}
 }
 
+func TestRegistryExecutesDefaultNewCommand(t *testing.T) {
+	for _, input := range []string{":new", "/new"} {
+		result, handled, err := DefaultRegistry().Execute(context.Background(), input)
+		if err != nil {
+			t.Fatalf("expected no error for %q, got %v", input, err)
+		}
+		if !handled {
+			t.Fatalf("expected %q to be handled", input)
+		}
+		if result.Action != ActionNewSession {
+			t.Fatalf("expected %q to start a session, got action %d", input, result.Action)
+		}
+	}
+}
+
+func TestRegistryNewCommandRejectsArguments(t *testing.T) {
+	result, handled, err := DefaultRegistry().Execute(context.Background(), "/new unexpected")
+	if err != nil || !handled {
+		t.Fatalf("expected command to be handled without error, got handled=%v err=%v", handled, err)
+	}
+	if result.Action != ActionContinue || result.Output != "usage: /new" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
 func TestRegistryExecutesDefaultHelpCommand(t *testing.T) {
 	for _, input := range []string{":help", "/help"} {
 		result, handled, err := DefaultRegistry().Execute(context.Background(), input)
@@ -73,7 +98,7 @@ func TestRegistryExecutesDefaultHelpCommand(t *testing.T) {
 		if !handled {
 			t.Fatalf("expected %q to be handled", input)
 		}
-		expectedOutput := "Available commands:\n  :q, /exit, /quit - exit harness\n  :help, /help - show available commands"
+		expectedOutput := "Available commands:\n  :q, /exit, /quit - exit harness\n  :help, /help - show available commands\n  :new, /new - start a new session"
 		if result.Output != expectedOutput {
 			t.Fatalf("expected help output %q, got %q", expectedOutput, result.Output)
 		}

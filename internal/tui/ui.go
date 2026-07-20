@@ -403,6 +403,14 @@ func (m *model) apply(event input.Event) {
 		if event.Model != "" {
 			m.modelName = event.Model
 		}
+	case input.EventSessionReset:
+		m.blocks = nil
+		m.streams = make(map[streamKey]int)
+		m.status = ""
+		m.notice = ""
+		m.scrollOffset = 0
+		m.editor.history = nil
+		m.editor.historyIndex = 0
 	}
 }
 

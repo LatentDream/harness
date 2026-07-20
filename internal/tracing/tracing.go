@@ -153,10 +153,11 @@ const (
 type EndReason string
 
 const (
-	EndReasonEOF       EndReason = "eof"
-	EndReasonExit      EndReason = "exit"
-	EndReasonCancelled EndReason = "cancelled"
-	EndReasonError     EndReason = "error"
+	EndReasonEOF        EndReason = "eof"
+	EndReasonExit       EndReason = "exit"
+	EndReasonNewSession EndReason = "new_session"
+	EndReasonCancelled  EndReason = "cancelled"
+	EndReasonError      EndReason = "error"
 )
 
 type Kind string
