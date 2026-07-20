@@ -58,6 +58,9 @@ Some tools ideas:
 
 ## Research:
 
+#### Eval
+- Harness evaluation
+
 #### SubAgent
 - Explore subagent
   1. The parent model decides a request needs broad codebase exploration
