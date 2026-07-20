@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"os/signal"
 	"os/user"
@@ -80,6 +81,7 @@ type model struct {
 	modelName          string
 	workingDirectory   string
 	username           string
+	tip                string
 	mode               input.Mode
 	focused            bool
 	ready              bool
@@ -202,6 +204,7 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 		modelName:        u.options.Model,
 		workingDirectory: u.options.WorkingDirectory,
 		username:         u.options.Username,
+		tip:              randomTip(),
 		mode:             input.ModeBuild,
 		focused:          true,
 		colors:           palette{enabled: os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"},
@@ -251,6 +254,7 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 			state.ready = true
 			state.isInferenceRunning = false
 			state.status = ""
+			state.tip = randomTip()
 			if err := u.draw(&state); err != nil {
 				return err
 			}
@@ -335,6 +339,19 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 			}
 		}
 	}
+}
+
+var inputTips = []string{
+	"Tip: @ searches project files",
+	"Tip: / opens the command palette",
+	"Tip: Tab switches [Build] and [Plan]",
+	"Tip: Ctrl+N inserts a newline",
+	"Tip: Esc cancels current work",
+	"Tip: PgUp and PgDn scroll the transcript",
+}
+
+func randomTip() string {
+	return inputTips[rand.IntN(len(inputTips))]
 }
 
 func inputPump(ctx context.Context, reader *os.File, requests <-chan struct{}, results chan<- readResult, done chan<- struct{}) {

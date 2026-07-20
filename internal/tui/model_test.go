@@ -196,6 +196,18 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 	}
 }
 
+func TestInputUsesStableTipPlaceholder(t *testing.T) {
+	state := model{mode: input.ModeBuild, focused: true, tip: "Tip: @ searches project files"}
+	first := strings.Join(state.renderInput(60), "\n")
+	second := strings.Join(state.renderInput(60), "\n")
+	if first != second {
+		t.Fatalf("placeholder changed between redraws: %q != %q", first, second)
+	}
+	if !strings.Contains(stripANSI(first), state.tip) || strings.Contains(first, "Ask anything") {
+		t.Fatalf("input did not render selected tip: %q", first)
+	}
+}
+
 func TestHeaderShowsClippedHomeRelativePathWithoutMode(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
