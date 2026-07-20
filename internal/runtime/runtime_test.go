@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/provider"
@@ -265,6 +266,85 @@ func TestRunRejectsUnknownSubmissionMode(t *testing.T) {
 	err := runtime.Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), `unsupported submission mode "unsafe"`) {
 		t.Fatalf("expected unsupported mode error, got %v", err)
+	}
+}
+
+func TestRunInterruptCancelsCurrentTurnAndContinues(t *testing.T) {
+	interrupts := make(chan struct{}, 1)
+	userInput := &scriptedInput{
+		receives:   []receiveResult{{text: "long task"}, {text: "/exit"}},
+		interrupts: interrupts,
+	}
+	aiProvider := &fakeProvider{
+		blockUntilCancel: true,
+		started:          make(chan struct{}),
+		cancelled:        make(chan struct{}),
+	}
+	runtime := New(aiProvider, userInput, userInput, Options{})
+
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(context.Background()) }()
+
+	select {
+	case <-aiProvider.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not start")
+	}
+	interrupts <- struct{}{}
+
+	select {
+	case <-aiProvider.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("provider context was not cancelled")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runtime did not continue to /exit after interrupt: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not finish")
+	}
+	if len(runtime.Session.Conversation) != 1 || runtime.Session.Conversation[0].Role != llm.RoleSystem {
+		t.Fatalf("cancelled turn was not rolled back: %#v", runtime.Session.Conversation)
+	}
+}
+
+func TestRunParentCancellationStillStopsRuntime(t *testing.T) {
+	userInput := &scriptedInput{
+		receives:   []receiveResult{{text: "long task"}},
+		interrupts: make(chan struct{}, 1),
+	}
+	aiProvider := &fakeProvider{
+		blockUntilCancel: true,
+		started:          make(chan struct{}),
+		cancelled:        make(chan struct{}),
+	}
+	runtime := New(aiProvider, userInput, userInput, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+
+	select {
+	case <-aiProvider.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not start")
+	}
+	cancel()
+
+	select {
+	case <-aiProvider.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("provider context was not cancelled")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("runtime error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not finish")
 	}
 }
 
@@ -638,11 +718,12 @@ type receiveResult struct {
 }
 
 type scriptedInput struct {
-	receives  []receiveResult
-	responses []string
-	statuses  []string
-	events    []input.Event
-	stream    strings.Builder
+	receives   []receiveResult
+	responses  []string
+	statuses   []string
+	events     []input.Event
+	stream     strings.Builder
+	interrupts chan struct{}
 }
 
 func (s *scriptedInput) Receive(context.Context) (input.Submission, error) {
@@ -653,6 +734,10 @@ func (s *scriptedInput) Receive(context.Context) (input.Submission, error) {
 	result := s.receives[0]
 	s.receives = s.receives[1:]
 	return input.Submission{Text: result.text, Mode: result.mode}, result.err
+}
+
+func (s *scriptedInput) Interrupts() <-chan struct{} {
+	return s.interrupts
 }
 
 func (s *scriptedInput) Emit(_ context.Context, event input.Event) error {
@@ -678,15 +763,18 @@ func (s *scriptedInput) Emit(_ context.Context, event input.Event) error {
 }
 
 type fakeProvider struct {
-	current      provider.Selection
-	available    []provider.Selection
-	useCalls     []provider.Selection
-	useErr       error
-	queries      []llm.Request
-	responses    []provider.Response
-	errors       []error
-	chunks       [][]string
-	streamErrors []error
+	current          provider.Selection
+	available        []provider.Selection
+	useCalls         []provider.Selection
+	useErr           error
+	queries          []llm.Request
+	responses        []provider.Response
+	errors           []error
+	chunks           [][]string
+	streamErrors     []error
+	blockUntilCancel bool
+	started          chan struct{}
+	cancelled        chan struct{}
 }
 
 func toolNames(definitions []llm.ToolDefinition) []string {
@@ -723,6 +811,17 @@ func (f *fakeProvider) Use(providerName string, modelName string) error {
 func (f *fakeProvider) Send(ctx context.Context, query llm.Request, stream provider.StreamHandler) (provider.Response, error) {
 	query.Messages = append([]llm.Message(nil), query.Messages...)
 	f.queries = append(f.queries, query)
+
+	if f.blockUntilCancel {
+		if f.started != nil {
+			close(f.started)
+		}
+		<-ctx.Done()
+		if f.cancelled != nil {
+			close(f.cancelled)
+		}
+		return provider.Response{}, ctx.Err()
+	}
 
 	if len(f.errors) > 0 {
 		err := f.errors[0]

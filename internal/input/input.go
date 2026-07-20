@@ -18,6 +18,13 @@ type Receiver interface {
 	Receive(context.Context) (Submission, error)
 }
 
+// Interrupter is optionally implemented by interactive receivers that can
+// request cancellation of the current in-flight submission without ending the
+// entire input stream.
+type Interrupter interface {
+	Interrupts() <-chan struct{}
+}
+
 type Sink interface {
 	Emit(context.Context, Event) error
 }

@@ -159,8 +159,52 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) (command
 			continue
 		}
 
-		if err := r.handleTurn(ctx, submission); err != nil {
+		if err := r.handleInterruptibleTurn(ctx, submission); err != nil {
 			return command.ActionContinue, err
+		}
+	}
+}
+
+func (r *Runtime) handleInterruptibleTurn(ctx context.Context, submission input.Submission) error {
+	interrupter, ok := r.receiver.(input.Interrupter)
+	if !ok || interrupter == nil {
+		return r.handleTurn(ctx, submission)
+	}
+
+	interrupts := interrupter.Interrupts()
+	if interrupts == nil {
+		return r.handleTurn(ctx, submission)
+	}
+	drainInterrupts(interrupts)
+
+	turnCtx, cancelTurn := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-interrupts:
+			cancelTurn()
+		case <-done:
+		case <-ctx.Done():
+		}
+	}()
+
+	err := r.handleTurn(turnCtx, submission)
+	close(done)
+	cancelTurn()
+	drainInterrupts(interrupts)
+
+	if err != nil && errors.Is(err, context.Canceled) && turnCtx.Err() != nil && ctx.Err() == nil {
+		return nil
+	}
+	return err
+}
+
+func drainInterrupts(interrupts <-chan struct{}) {
+	for {
+		select {
+		case <-interrupts:
+		default:
+			return
 		}
 	}
 }

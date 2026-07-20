@@ -35,6 +35,7 @@ type UI struct {
 	submissions chan input.Submission
 	events      chan input.Event
 	ready       chan struct{}
+	interrupts  chan struct{}
 }
 
 type blockKind int
@@ -104,6 +105,7 @@ func New(in, out, errOut *os.File, options Options) (*UI, error) {
 		submissions: make(chan input.Submission, 1),
 		events:      make(chan input.Event, 128),
 		ready:       make(chan struct{}, 1),
+		interrupts:  make(chan struct{}, 1),
 	}
 	if terminal.IsInteractive() {
 		fzf, findErr := findFZF()
@@ -139,6 +141,10 @@ func (u *UI) Emit(ctx context.Context, event input.Event) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (u *UI) Interrupts() <-chan struct{} {
+	return u.interrupts
 }
 
 func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (runErr error) {
@@ -419,6 +425,17 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 	switch pressed.kind {
 	case keyCtrlC:
 		return true, nil
+	case keyEscape:
+		if state.ready {
+			state.editor.reset()
+			return false, nil
+		}
+		select {
+		case u.interrupts <- struct{}{}:
+		default:
+		}
+		state.notice = "cancelling current work..."
+		return false, nil
 	case keyFocusIn:
 		state.focused = true
 		return false, nil
@@ -457,8 +474,6 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		state.editor.reset()
 	case keyNewline:
 		state.editor.insert("\n")
-	case keyEscape:
-		state.editor.reset()
 	case keyBackspace:
 		state.editor.backspace()
 	case keyDelete:
