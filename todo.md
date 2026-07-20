@@ -1,5 +1,7 @@
 # TODO
 
+FIND A BETTER NAME FOR THIS PROJECT
+
 ## Features:
 
 **Agent:**
@@ -19,12 +21,17 @@
 
 **UI:**
 - [x] bind ctrol u / d to scroll up / down 1/2 a page
-- [ ] TUI: escape to cancel the last msg
+- [x] TUI: escape to cancel the last msg
 - [ ] TUI: a `!` to run a command and be able to happen in to the next message (the truncated output)
 - [ ] TUI: Bind the scroll up / down keys to scroll the page up / down
 - [ ] TUI: markdown rendering
 - [ ] TUI: session selector
+- [ ] Better interupt handling
+- [ ] Queue messages from the user
 
+**Extension:**
+- [ ] Have a way to add mode (to the: plan, build), by having a file in .harness/mode/debug.json
+      where the user write the permissions + the promtp and what to inject in the context
 
 Some tools ideas:
 - `todo list` tool for the user to be able to add tasks / cross them off

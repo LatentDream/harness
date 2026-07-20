@@ -115,10 +115,8 @@ func (m *model) renderTranscript(width, height int) []string {
 		welcome := "Start with a question, @ to find a file, or / for commands."
 		all = []string{"", m.colors.wrap(ansiDim+ansiGray, "  "+welcome)}
 	}
+	m.scrollOffset = min(max(0, m.scrollOffset), max(0, len(all)-height))
 	end := len(all) - m.scrollOffset
-	if end < 0 {
-		end = 0
-	}
 	start := max(0, end-height)
 	view := append([]string(nil), all[start:end]...)
 	for len(view) < height {

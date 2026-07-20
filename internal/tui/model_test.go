@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -67,6 +68,78 @@ func TestRendererSanitizesUntrustedEscapeSequences(t *testing.T) {
 	}
 	if width := displayWidth(ansiCyan + "hello" + ansiReset); width != 5 {
 		t.Fatalf("styled width = %d", width)
+	}
+}
+
+func TestRenderTranscriptClampsScrollOffsetAtFirstPage(t *testing.T) {
+	state := model{
+		height:       8,
+		scrollOffset: 100,
+		blocks: []transcriptBlock{
+			{kind: blockUser, text: "first", mode: input.ModeBuild},
+			{kind: blockAssistant, text: "second"},
+			{kind: blockUser, text: "third", mode: input.ModeBuild},
+		},
+	}
+
+	view := state.renderTranscript(40, 4)
+
+	if state.scrollOffset != 5 {
+		t.Fatalf("scroll offset = %d, want 5", state.scrollOffset)
+	}
+	if got := strings.Join(view, "\n"); !strings.Contains(got, "YOU  BUILD\n  first") {
+		t.Fatalf("first transcript page is not visible: %q", got)
+	}
+
+	state.renderTranscript(40, 8)
+	if state.scrollOffset != 1 {
+		t.Fatalf("scroll offset after viewport growth = %d, want 1", state.scrollOffset)
+	}
+}
+
+func TestRenderTranscriptDoesNotScrollShortTranscript(t *testing.T) {
+	state := model{
+		scrollOffset: 100,
+		blocks:       []transcriptBlock{{kind: blockUser, text: "only", mode: input.ModeBuild}},
+	}
+
+	view := state.renderTranscript(40, 4)
+
+	if state.scrollOffset != 0 {
+		t.Fatalf("scroll offset = %d, want 0", state.scrollOffset)
+	}
+	if got := strings.Join(view, "\n"); !strings.Contains(got, "YOU  BUILD\n  only") {
+		t.Fatalf("short transcript is not visible: %q", got)
+	}
+}
+
+func TestPageDownMovesImmediatelyAfterPageUpAtFirstPage(t *testing.T) {
+	state := model{
+		height: 8,
+		blocks: []transcriptBlock{
+			{kind: blockUser, text: "first", mode: input.ModeBuild},
+			{kind: blockAssistant, text: "second"},
+			{kind: blockUser, text: "third", mode: input.ModeBuild},
+			{kind: blockAssistant, text: "fourth"},
+		},
+	}
+	ui := UI{}
+
+	for range 10 {
+		if _, err := ui.handleKey(context.Background(), &state, key{kind: keyPageUp}); err != nil {
+			t.Fatal(err)
+		}
+		state.renderTranscript(40, 4)
+	}
+	if state.scrollOffset != 8 {
+		t.Fatalf("scroll offset at first page = %d, want 8", state.scrollOffset)
+	}
+
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyPageDown}); err != nil {
+		t.Fatal(err)
+	}
+	if state.scrollOffset != 4 {
+		t.Fatalf("scroll offset after page down = %d, want 4", state.scrollOffset)
 	}
 }
 
