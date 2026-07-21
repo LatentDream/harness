@@ -18,6 +18,7 @@ FIND A BETTER NAME FOR THIS PROJECT
 - [ ] Add a title system (small llm call to generate a title for the session)
 - [ ] Auth (as now I need to auth using opencode lol)
 - [ ] First touch: proper way to add auth, and generate the config in ~/.harness/config.json
+- [ ] New tool: webfetch
 
 **UI:**
 - [x] bind ctrol u / d to scroll up / down 1/2 a page
