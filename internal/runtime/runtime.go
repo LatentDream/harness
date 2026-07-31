@@ -34,6 +34,7 @@ type Runtime struct {
 	Controller  orchestrator.Orchestrator
 	Environment environment.Environment
 	Session     session.Session
+	ChatTools   []model.Tool
 
 	receiver  input.Receiver
 	output    input.Sink
@@ -46,6 +47,7 @@ type Options struct {
 	Commands      *command.Registry
 	Clipboard     command.Clipboard
 	ResetFrontend bool
+	ChatTools     []model.Tool
 }
 
 func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, options Options) *Runtime {
@@ -59,6 +61,7 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 		id:        uuid.New(),
 		Provider:  aiProvider,
 		Tools:     tool.NewDefault(),
+		ChatTools: options.ChatTools,
 		receiver:  receiver,
 		output:    output,
 		commands:  options.Commands,
@@ -279,18 +282,12 @@ func (r *Runtime) handleTurn(ctx context.Context, submission input.Submission) e
 }
 
 func (r *Runtime) inference(ctx context.Context, turnID string, mode input.Mode) (string, error) {
-	availableTools := r.Tools
-	if mode == input.ModePlan {
-		availableTools = tool.WithCapability(r.Tools, model.CapabilityReadOnly)
-	}
+	availableTools := r.toolsForMode(mode)
 	definitions := tool.Definitions(availableTools)
 	toolsByName := tool.ByName(availableTools)
 
 	for round := 0; round < maxToolRounds; round++ {
-		messages := r.Session.Conversation
-		if mode == input.ModePlan {
-			messages = messagesWithPlanInstruction(messages)
-		}
+		messages := messagesForMode(r.Session.Conversation, mode)
 		response, err := execution.LLMCall(ctx, r.output, r.Provider, llm.Request{
 			Messages: messages,
 			Tools:    definitions,
@@ -316,15 +313,37 @@ func (r *Runtime) inference(ctx context.Context, turnID string, mode input.Mode)
 	return "", errors.New("tool call limit exceeded")
 }
 
-func messagesWithPlanInstruction(messages []llm.Message) []llm.Message {
+func (r *Runtime) toolsForMode(mode input.Mode) []model.Tool {
+	switch mode {
+	case input.ModePlan:
+		return tool.WithCapability(r.Tools, model.CapabilityReadOnly)
+	case input.ModeChat:
+		return r.ChatTools
+	default:
+		return r.Tools
+	}
+}
+
+func messagesForMode(messages []llm.Message, mode input.Mode) []llm.Message {
+	switch mode {
+	case input.ModePlan:
+		return messagesWithInstruction(messages, session.PlanModeInstruction)
+	case input.ModeChat:
+		return messagesWithInstruction(messages, session.ChatModeInstruction)
+	default:
+		return messages
+	}
+}
+
+func messagesWithInstruction(messages []llm.Message, instruction string) []llm.Message {
 	result := append([]llm.Message(nil), messages...)
 	for index := range result {
 		if result[index].Role == llm.RoleSystem {
-			result[index].Content += "\n\n" + session.PlanModeInstruction
+			result[index].Content += "\n\n" + instruction
 			return result
 		}
 	}
-	return append([]llm.Message{{Role: llm.RoleSystem, Content: session.PlanModeInstruction}}, result...)
+	return append([]llm.Message{{Role: llm.RoleSystem, Content: instruction}}, result...)
 }
 
 func (r *Runtime) initialize() error {
@@ -372,6 +391,8 @@ func normalizeMode(mode input.Mode) (input.Mode, error) {
 		return input.ModeBuild, nil
 	case input.ModePlan:
 		return input.ModePlan, nil
+	case input.ModeChat:
+		return input.ModeChat, nil
 	default:
 		return "", fmt.Errorf("unsupported submission mode %q", mode)
 	}

@@ -7,6 +7,7 @@ type Mode string
 const (
 	ModeBuild Mode = "build"
 	ModePlan  Mode = "plan"
+	ModeChat  Mode = "chat"
 )
 
 type Submission struct {

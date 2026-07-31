@@ -374,7 +374,7 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 var inputTips = []string{
 	"Tip: @ searches project files",
 	"Tip: / opens the command palette",
-	"Tip: Tab switches [Build] and [Plan]",
+	"Tip: Tab switches [Build], [Plan], and [Chat]",
 	"Tip: Ctrl+N inserts a newline",
 	"Tip: Esc cancels current work",
 	"Tip: PgUp/PgDn, Ctrl+U/D, or the mouse wheel scroll the transcript",
@@ -582,9 +582,12 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 			state.editor.insert("\t")
 			return false, nil
 		}
-		if state.mode == input.ModeBuild {
+		switch state.mode {
+		case input.ModeBuild:
 			state.mode = input.ModePlan
-		} else {
+		case input.ModePlan:
+			state.mode = input.ModeChat
+		default:
 			state.mode = input.ModeBuild
 		}
 		return false, nil

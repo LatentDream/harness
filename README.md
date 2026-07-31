@@ -23,7 +23,7 @@ Harness is a work in progress. See [todo.md](todo.md) for the roadmap.
 - Support multiple LLM providers, including Codex, OpenAI-compatible APIs, Anthropic, and LiteLLM;
 - Interactive terminal UI when running in a TTY.
 - Line-oriented mode for redirected input/output.
-- Build and Plan modes.
+- Build, Plan, and Chat modes.
 - Tool calling support for reading, writing, searching, globbing, and shell commands.
 - Provider/model switching with `:model` or `/model`.
 - New session support with `:new` or `/new`.
@@ -180,10 +180,10 @@ Useful keys:
 | --- | --- |
 | `Enter` | Submit prompt |
 | `Ctrl+N` | Insert newline |
-| `Tab` | Switch Build/Plan mode |
+| `Tab` | Cycle Build/Plan/Chat mode |
 | `@` | Pick a repository file |
 | `/` or `:` | Open command picker |
 | `!` | Run a local shell command and insert truncated output into the next prompt |
 | `Ctrl+C` | Cancel and exit |
 
-Plan mode exposes only read-only tools. Build mode allows the full configured tool set.
+Build mode allows the full configured tool set. Plan mode exposes only read-only tools. Chat mode is conversational and attaches no coding tools by default; runtime integrations may allow only `webfetch`.

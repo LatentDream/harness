@@ -173,6 +173,12 @@ func TestRenderAppliesMarginAndTitleCaseMode(t *testing.T) {
 	if !strings.Contains(rendered, "[Plan]") || strings.Contains(rendered, "[PLAN]") {
 		t.Fatalf("plan mode badge is not title-cased: %q", rendered)
 	}
+
+	state.mode = input.ModeChat
+	rendered = stripANSI(state.render())
+	if !strings.Contains(rendered, "[Chat]") || strings.Contains(rendered, "[CHAT]") {
+		t.Fatalf("chat mode badge is not title-cased: %q", rendered)
+	}
 }
 
 func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
@@ -189,7 +195,7 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 	for _, expected := range []string{
 		"╭─ Ready when you are",
 		"Start with a question, @ to find a file, or / for commands.",
-		"enter send  ·  ctrl+n newline  ·  tab mode",
+		"enter send  ·  ctrl+n newline  ·  tab build/plan/chat",
 		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 		"╰─",
 	} {
@@ -423,6 +429,30 @@ func TestMouseWheelScrollsTranscript(t *testing.T) {
 	}
 	if state.scrollOffset != 0 {
 		t.Fatalf("scroll offset after extra wheel down = %d, want 0", state.scrollOffset)
+	}
+}
+
+func TestTabCyclesBuildPlanChatModes(t *testing.T) {
+	ui := UI{}
+	state := model{mode: input.ModeBuild}
+
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyTab}); err != nil {
+		t.Fatal(err)
+	}
+	if state.mode != input.ModePlan {
+		t.Fatalf("first tab mode = %q, want plan", state.mode)
+	}
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyTab}); err != nil {
+		t.Fatal(err)
+	}
+	if state.mode != input.ModeChat {
+		t.Fatalf("second tab mode = %q, want chat", state.mode)
+	}
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyTab}); err != nil {
+		t.Fatal(err)
+	}
+	if state.mode != input.ModeBuild {
+		t.Fatalf("third tab mode = %q, want build", state.mode)
 	}
 }
 

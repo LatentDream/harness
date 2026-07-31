@@ -17,6 +17,7 @@ import (
 	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/session/llm"
+	"latentdream/harness/internal/tool"
 	"latentdream/harness/internal/tool/model"
 	"latentdream/harness/internal/tracing"
 )
@@ -228,6 +229,59 @@ func TestRunPlanModeUsesReadOnlyToolsAndEphemeralInstruction(t *testing.T) {
 	payload := recorder.run.events[0].Payload.(tracing.UserInputPayload)
 	if payload.Mode != input.ModePlan {
 		t.Fatalf("expected normalized plan mode in trace, got %#v", payload)
+	}
+}
+
+func TestRunChatModeUsesNoToolsAndEphemeralInstruction(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{
+		{text: "just chat", mode: input.Mode(" CHAT ")},
+		{text: "/exit"},
+	}}
+	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "hello"}}}}
+	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
+	runtime := New(aiProvider, userInput, userInput, Options{})
+
+	if err := runtime.Run(tracing.Init(context.Background(), recorder)); err != nil {
+		t.Fatalf("expected chat turn to exit cleanly, got %v", err)
+	}
+	if len(aiProvider.queries) != 1 {
+		t.Fatalf("expected one chat request, got %d", len(aiProvider.queries))
+	}
+	query := aiProvider.queries[0]
+	if len(query.Tools) != 0 {
+		t.Fatalf("expected no chat tools, got %#v", toolNames(query.Tools))
+	}
+	first := query.Messages[0]
+	if first.Role != llm.RoleSystem || !strings.Contains(first.Content, session.ChatModeInstruction) {
+		t.Fatalf("expected chat instruction in system message, got %#v", first)
+	}
+	for _, message := range runtime.Session.Conversation {
+		if strings.Contains(message.Content, session.ChatModeInstruction) {
+			t.Fatal("chat instruction was persisted in the conversation")
+		}
+	}
+	payload := recorder.run.events[0].Payload.(tracing.UserInputPayload)
+	if payload.Mode != input.ModeChat {
+		t.Fatalf("expected normalized chat mode in trace, got %#v", payload)
+	}
+}
+
+func TestRunChatModeCanAllowWebfetch(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{
+		{text: "look online", mode: input.ModeChat},
+		{text: "/exit"},
+	}}
+	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "ok"}}}}
+	runtime := New(aiProvider, userInput, userInput, Options{ChatTools: tool.NewChatDefault()})
+
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatalf("expected chat turn to exit cleanly, got %v", err)
+	}
+	if len(aiProvider.queries) != 1 {
+		t.Fatalf("expected one chat request, got %d", len(aiProvider.queries))
+	}
+	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"webfetch"}) {
+		t.Fatalf("expected only webfetch in chat mode, got %#v", got)
 	}
 }
 

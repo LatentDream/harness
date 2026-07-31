@@ -49,3 +49,7 @@ func WithCapability(tools []model.Tool, capability model.Capability) []model.Too
 func NewDefault() []model.Tool {
 	return []model.Tool{read.New(), write.New(), glob.New(), grep.New(), webfetch.New(), bash.New()}
 }
+
+func NewChatDefault() []model.Tool {
+	return []model.Tool{webfetch.New()}
+}

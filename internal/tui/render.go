@@ -136,7 +136,7 @@ func (m *model) renderWelcome(width int) []string {
 	lines := []string{"", m.colors.wrap(ansiBold+ansiCyan, "╭─ Ready when you are")}
 	sections := []string{
 		"Start with a question, @ to find a file, or / for commands.",
-		"enter send  ·  ctrl+n newline  ·  tab mode",
+		"enter send  ·  ctrl+n newline  ·  tab build/plan/chat",
 		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 	}
 	for index, section := range sections {
@@ -153,10 +153,7 @@ func (m *model) renderWelcome(width int) []string {
 func (m *model) blockLabel(block transcriptBlock) (string, string) {
 	switch block.kind {
 	case blockUser:
-		mode := "[Build]"
-		if block.mode == input.ModePlan {
-			mode = "[Plan]"
-		}
+		mode, _ := modeBadge(block.mode)
 		username := sanitizeInline(strings.TrimSpace(m.username))
 		if username == "" {
 			username = "YOU"
@@ -293,12 +290,7 @@ func (m *model) displayToolPath(target string) string {
 }
 
 func (m *model) renderInput(width int) []string {
-	accent := ansiGreen
-	mode := "[Build]"
-	if m.mode == input.ModePlan {
-		accent = ansiMagenta
-		mode = "[Plan]"
-	}
+	mode, accent := modeBadge(m.mode)
 	prefix := mode + " > "
 	if m.promptMode == promptShell {
 		accent = ansiYellow
@@ -333,6 +325,17 @@ func (m *model) renderInput(width int) []string {
 		lines = append(lines, linePrefix+line)
 	}
 	return lines
+}
+
+func modeBadge(mode input.Mode) (string, string) {
+	switch mode {
+	case input.ModePlan:
+		return "[Plan]", ansiMagenta
+	case input.ModeChat:
+		return "[Chat]", ansiCyan
+	default:
+		return "[Build]", ansiGreen
+	}
 }
 
 func cursorMarker(runes []rune, cursor int, focused bool) string {
