@@ -75,3 +75,30 @@ func TestRunFZFReturnsSelectedField(t *testing.T) {
 		t.Fatalf("selection = %q, %v", selected, ok)
 	}
 }
+
+func TestSessionCandidatesUseTitleForDisplayAndIDForSelection(t *testing.T) {
+	got := sessionCandidates([]command.SessionSummary{
+		{ID: "session-2", Title: "Fix Parser Commas"},
+		{ID: "session-1"},
+		{ID: "", Title: "ignored"},
+	})
+	want := []string{"session-2\tFix Parser Commas", "session-1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sessions = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunFZFSessionCandidateReturnsID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fzf")
+	script := "#!/bin/sh\nIFS= read -r line\nprintf '%s\\n' \"$line\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	selected, ok, err := runFZF(context.Background(), path, []string{"session-id\tFix Parser Commas"}, "Sessions > ", "", false, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || selected != "session-id" {
+		t.Fatalf("selection = %q, %v", selected, ok)
+	}
+}

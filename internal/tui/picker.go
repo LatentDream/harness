@@ -91,6 +91,25 @@ func modelCandidates(selections []provider.Selection) []string {
 	return result
 }
 
+func sessionCandidates(sessions []command.SessionSummary) []string {
+	result := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		id := strings.TrimSpace(session.ID)
+		if id == "" {
+			continue
+		}
+		title := strings.TrimSpace(session.Title)
+		if title == "" {
+			result = append(result, id)
+			continue
+		}
+		// The full immutable ID is the selected field; the title remains the
+		// primary fuzzy-search and display field after the tab delimiter.
+		result = append(result, id+"	"+title)
+	}
+	return result
+}
+
 func cleanCandidates(values []string) []string {
 	clean := values[:0]
 	for _, value := range values {

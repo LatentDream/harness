@@ -99,13 +99,14 @@ func run() int {
 
 	selection := aiProvider.Current()
 	commands := command.DefaultRegistry()
-	commands.Register(command.NewSwitchCmd(workspaceSessionResolver{store: store, workspace: workingDirectory}))
+	sessionResolver := workspaceSessionResolver{store: store, workspace: workingDirectory}
+	commands.Register(command.NewSwitchCmd(sessionResolver))
 	runtimeOptions := runtime.Options{Commands: commands, Clipboard: clipboard.NewSystem(), InitialSession: &initial, SessionID: record.ID, SessionTitle: record.Title, TitleGenerator: sessiontitle.NewGenerator(aiProvider)}
 
 	if tui.IsInteractive(os.Stdin, os.Stdout) {
 		frontend, frontendErr := tui.New(os.Stdin, os.Stdout, os.Stderr, tui.Options{
 			Provider: selection.Provider, Model: selection.Model, WorkingDirectory: workingDirectory,
-			Commands: commands, Models: aiProvider.Available(),
+			Commands: commands, Models: aiProvider.Available(), Sessions: sessionResolver,
 		})
 		if frontendErr != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize terminal UI: %v\n", frontendErr)

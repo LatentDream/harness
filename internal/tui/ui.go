@@ -25,6 +25,7 @@ type Options struct {
 	Username         string
 	Commands         *command.Registry
 	Models           []provider.Selection
+	Sessions         command.SessionResolver
 }
 
 type UI struct {
@@ -771,7 +772,33 @@ func (u *UI) pickCommand(ctx context.Context, state *model, prefix string, query
 	if selected == prefix+"model" {
 		return u.pickModel(ctx, state, selected)
 	}
+	if selected == prefix+"switch" {
+		return u.pickSession(ctx, state, selected)
+	}
 	state.editor.set(selected + " ")
+	return nil
+}
+
+func (u *UI) pickSession(ctx context.Context, state *model, commandText string) error {
+	if u.options.Sessions == nil {
+		state.editor.set(commandText + " ")
+		return errors.New("session switching is not configured")
+	}
+	sessions, err := u.options.Sessions.ListSessions(ctx)
+	if err != nil {
+		state.editor.set(commandText + " ")
+		return err
+	}
+	selected, ok, err := u.runPicker(ctx, sessionCandidates(sessions), "Sessions > ", "", false)
+	if err != nil {
+		state.editor.set(commandText + " ")
+		return err
+	}
+	if !ok {
+		state.editor.set(commandText + " ")
+		return nil
+	}
+	state.editor.set(commandText + " " + selected)
 	return nil
 }
 

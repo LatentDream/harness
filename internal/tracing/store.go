@@ -212,7 +212,26 @@ func (s *FileStore) List(ctx context.Context, workspace string) ([]SessionRecord
 	if err != nil {
 		return nil, err
 	}
-	result := append([]SessionRecord(nil), index.Sessions...)
+	result := make([]SessionRecord, 0, len(index.Sessions))
+	for _, record := range index.Sessions {
+		manifest, manifestErr := s.readSession(record.ID)
+		if manifestErr != nil {
+			return nil, manifestErr
+		}
+		if manifest.WorkspacePath != workspace {
+			return nil, errors.New("session index contains a session from another working directory")
+		}
+		hasUserMessage, snapshotErr := s.hasUserMessage(manifest)
+		if snapshotErr != nil {
+			return nil, snapshotErr
+		}
+		if !hasUserMessage {
+			continue
+		}
+		record.Title = manifest.Title
+		record.UpdatedAt = manifest.UpdatedAt
+		result = append(result, record)
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt.After(result[j].UpdatedAt) })
 	return result, nil
 }
@@ -349,6 +368,26 @@ func (s *FileStore) save(ctx context.Context, sessionID string, state SessionSta
 		}
 	}
 	return nil
+}
+
+func (s *FileStore) hasUserMessage(manifest sessionManifest) (bool, error) {
+	if manifest.LatestSnapshot == 0 {
+		return false, nil
+	}
+	path := filepath.Join(s.sessionDir(manifest.ID), "snapshots", fmt.Sprintf("%010d.json", manifest.LatestSnapshot))
+	var snapshot persistedSnapshot
+	if err := readJSON(path, &snapshot); err != nil {
+		return false, fmt.Errorf("inspect session snapshot: %w", err)
+	}
+	if snapshot.Version != CurrentVersion {
+		return false, fmt.Errorf("unsupported session snapshot version %d", snapshot.Version)
+	}
+	for _, message := range snapshot.Conversation {
+		if message.Role == llm.RoleUser && strings.TrimSpace(message.Content) != "" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *FileStore) loadLocked(workspace, id string) (SessionRecord, session.Session, error) {

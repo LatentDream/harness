@@ -52,9 +52,11 @@ used if model generation fails. The persisted title appears in the header and in
 - `:new` or `/new` closes the current persisted session and starts a fresh one.
   Conversation history and the TUI transcript are cleared, while the selected
   provider and model remain active.
-- `:switch` or `/switch` lists sessions created in the current working
-  directory. Pass an exact title, full session ID, or unique ID prefix to switch
-  conversations. Sessions from other working directories are never considered.
+- Selecting `:switch` or `/switch` from the TUI command picker opens a fuzzy
+  session picker. It searches generated titles and falls back to displaying the
+  session ID when no title exists. Empty sessions and sessions from other working
+  directories are excluded. You can also type an exact title, full session ID,
+  or unique ID prefix after the command.
 - `:help` or `/help` lists all available commands.
 
 ## Pickers

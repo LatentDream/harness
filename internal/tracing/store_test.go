@@ -52,6 +52,11 @@ func TestFileStoreKeepsMultipleSessionsAndUsesActiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, record := range []SessionRecord{first, second} {
+		if err := store.save(context.Background(), record.ID, SessionState{Conversation: []llm.Message{{Role: llm.RoleUser, Content: record.Title}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	listed, err := store.List(context.Background(), workspace)
 	if err != nil {
 		t.Fatal(err)
@@ -185,5 +190,31 @@ func TestFileStoreSetTitleRejectsAnotherWorkspace(t *testing.T) {
 	}
 	if _, err := store.SetTitle(context.Background(), t.TempDir(), record.ID, "Wrong Workspace"); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("SetTitle returned %v", err)
+	}
+}
+
+func TestFileStoreListOmitsSessionsWithoutUserMessages(t *testing.T) {
+	workspace := t.TempDir()
+	store, _ := NewFileStore(t.TempDir())
+	empty, err := store.Create(context.Background(), workspace, "empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.save(context.Background(), empty.ID, SessionState{Conversation: []llm.Message{{Role: llm.RoleSystem, Content: "system"}}}); err != nil {
+		t.Fatal(err)
+	}
+	nonEmpty, err := store.Create(context.Background(), workspace, "kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.save(context.Background(), nonEmpty.ID, SessionState{Conversation: []llm.Message{{Role: llm.RoleUser, Content: "hello"}}}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := store.List(context.Background(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != nonEmpty.ID {
+		t.Fatalf("listed sessions = %#v", listed)
 	}
 }
