@@ -143,13 +143,14 @@ func (r *terminalMarkdown) renderCode(segments *text.Segments, language string) 
 		return
 	}
 
-	// The language badge occupies the top padding row. The other edges use a
-	// single background-colored space, so selecting code never includes border
-	// glyphs and adds at most one harmless leading space.
-	badge := ansiCodeAccentBackground + ansiBold + " " + label + " " + ansiReset
-	r.lines = append(r.lines, badge+ansiCodeBackground+ansiEraseLineEnd+ansiReset)
+	// The language badge occupies the top padding row. Code rows use explicit
+	// padding instead of border glyphs so selecting code remains copy-friendly.
+	badgeText := " " + label + " "
+	badge := ansiCodeAccentBackground + ansiBold + badgeText + ansiReset
+	filler := strings.Repeat(" ", max(0, r.width-2-displayWidth(badgeText)))
+	r.lines = append(r.lines, badge+ansiCodeBackground+filler+ansiReset+"  ")
 	r.lines = append(r.lines, r.codePanelLine(""))
-	contentWidth := max(1, r.width-1)
+	contentWidth := max(1, r.width-4)
 	for index := range segments.Len() {
 		segment := segments.At(index)
 		value := strings.TrimSuffix(string(segment.Value(r.source)), "\n")
@@ -164,7 +165,11 @@ func (r *terminalMarkdown) renderCode(segments *text.Segments, language string) 
 }
 
 func (r *terminalMarkdown) codePanelLine(value string) string {
-	return ansiCodeBackground + "  " + value + ansiEraseLineEnd + ansiReset
+	inner := "  " + value
+	if padding := r.width - 2 - displayWidth(inner); padding > 0 {
+		inner += strings.Repeat(" ", padding)
+	}
+	return ansiCodeBackground + inner + ansiReset + "  "
 }
 
 func wrapCodeLine(value string, width int) []string {

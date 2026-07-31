@@ -202,9 +202,17 @@ func TestRenderCodeBlockUsesCopyFriendlyStyling(t *testing.T) {
 	if strings.TrimSpace(lines[1]) != "" {
 		t.Fatalf("code block missing padding below language badge: %q", lines[1])
 	}
+	for _, line := range lines {
+		if !strings.HasSuffix(line, "  ") {
+			t.Fatalf("code panel line missing normal-background right padding: %q", line)
+		}
+		if width := displayWidth(line); width != 40 {
+			t.Fatalf("code panel line width = %d, want 40: %q", width, line)
+		}
+	}
 	code := make([]string, 0, 3)
 	for _, line := range lines[2:5] {
-		code = append(code, strings.TrimPrefix(line, "  "))
+		code = append(code, strings.TrimRight(strings.TrimPrefix(line, "  "), " "))
 	}
 	if got := strings.Join(code, "\n"); got != "{\n  \\\"version\\\": 1\n}" {
 		t.Fatalf("code block content = %q", got)
