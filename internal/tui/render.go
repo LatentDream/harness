@@ -153,7 +153,8 @@ func (m *model) renderWelcome(width int) []string {
 	lines := []string{"", m.colors.wrap(ansiBold+ansiCyan, "╭─ Ready when you are")}
 	sections := []string{
 		"Start with a question, @ to find a file, or / for commands.",
-		"enter send  ·  ctrl+n newline  ·  tab build/plan/chat  ·  f2 raw/md",
+		"enter send  ·  ctrl+n newline  ·  f4/alt+e editor",
+		"tab build/plan/chat  ·  f2 raw/md",
 		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 	}
 	for index, section := range sections {

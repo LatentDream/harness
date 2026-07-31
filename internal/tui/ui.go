@@ -606,6 +606,8 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		return false, nil
 	}
 	switch pressed.kind {
+	case keyExternalEditor:
+		return false, u.editPromptExternally(ctx, state)
 	case keyEnter:
 		text := state.editor.value()
 		if strings.TrimSpace(text) == "" {

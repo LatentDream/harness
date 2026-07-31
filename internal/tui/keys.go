@@ -33,6 +33,7 @@ const (
 	keyWordRight
 	keyFocusIn
 	keyFocusOut
+	keyExternalEditor
 )
 
 type key struct {
@@ -50,6 +51,9 @@ var keySequences = []struct {
 	sequence []byte
 	kind     keyKind
 }{
+	{[]byte{0x18, 0x05}, keyExternalEditor},
+	{[]byte("\x1bOS"), keyExternalEditor},
+	{[]byte("\x1b[14~"), keyExternalEditor},
 	{[]byte("\x1b[3~"), keyDelete},
 	{[]byte("\x1bOQ"), keyToggleMarkdown},
 	{[]byte("\x1b[12~"), keyToggleMarkdown},
@@ -59,6 +63,10 @@ var keySequences = []struct {
 	{[]byte("\x1b[F"), keyEnd},
 	{[]byte("\x1bOH"), keyHome},
 	{[]byte("\x1bOF"), keyEnd},
+	{[]byte("\x1b[1;5D"), keyWordLeft},
+	{[]byte("\x1b[5D"), keyWordLeft},
+	{[]byte("\x1b[1;5C"), keyWordRight},
+	{[]byte("\x1b[5C"), keyWordRight},
 	{[]byte("\x1b[D"), keyLeft},
 	{[]byte("\x1b[C"), keyRight},
 	{[]byte("\x1b[A"), keyUp},
@@ -67,6 +75,7 @@ var keySequences = []struct {
 	{[]byte("\x1b[O"), keyFocusOut},
 	{[]byte("\x1bb"), keyWordLeft},
 	{[]byte("\x1bf"), keyWordRight},
+	{[]byte("\x1be"), keyExternalEditor},
 }
 
 func (d *keyDecoder) feed(data []byte) []key {
@@ -190,6 +199,7 @@ func (d *keyDecoder) flushPending(now time.Time) []key {
 	}
 	d.pending = time.Time{}
 	if d.buffer[0] != 0x1b {
+		d.buffer = d.buffer[1:]
 		return d.feed(nil)
 	}
 	d.buffer = d.buffer[1:]

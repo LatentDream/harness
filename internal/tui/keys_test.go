@@ -21,6 +21,25 @@ func TestKeyDecoderHandlesNavigationAndUnicode(t *testing.T) {
 	}
 }
 
+func TestKeyDecoderHandlesCtrlArrowWordNavigation(t *testing.T) {
+	var decoder keyDecoder
+	got := decoder.feed([]byte("\x1b[1;5D\x1b[1;5C\x1b[5D\x1b[5C"))
+	want := []key{{kind: keyWordLeft}, {kind: keyWordRight}, {kind: keyWordLeft}, {kind: keyWordRight}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("keys = %#v, want %#v", got, want)
+	}
+}
+
+func TestKeyDecoderRetainsSplitCtrlArrowSequence(t *testing.T) {
+	var decoder keyDecoder
+	if got := decoder.feed([]byte("\x1b[1;")); len(got) != 0 {
+		t.Fatalf("ctrl-arrow prefix emitted early: %#v", got)
+	}
+	if got := decoder.feed([]byte("5D")); !reflect.DeepEqual(got, []key{{kind: keyWordLeft}}) {
+		t.Fatalf("split ctrl-arrow sequence = %#v", got)
+	}
+}
+
 func TestKeyDecoderRetainsSplitEscapeSequence(t *testing.T) {
 	var decoder keyDecoder
 	if got := decoder.feed([]byte("\x1b")); len(got) != 0 {
@@ -118,5 +137,37 @@ func TestKeyDecoderUsesF2ToToggleMarkdown(t *testing.T) {
 	want := []key{{kind: keyToggleMarkdown}, {kind: keyToggleMarkdown}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys = %#v, want %#v", got, want)
+	}
+}
+
+func TestKeyDecoderUsesExternalEditorShortcuts(t *testing.T) {
+	var decoder keyDecoder
+	got := decoder.feed([]byte("OS[14~e"))
+	want := []key{{kind: keyExternalEditor}, {kind: keyExternalEditor}, {kind: keyExternalEditor}, {kind: keyExternalEditor}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("keys = %#v, want %#v", got, want)
+	}
+}
+
+func TestKeyDecoderRetainsSplitCtrlXCtrlESequence(t *testing.T) {
+	var decoder keyDecoder
+	if got := decoder.feed([]byte{0x18}); len(got) != 0 {
+		t.Fatalf("ctrl+x prefix emitted early: %#v", got)
+	}
+	if got := decoder.feed([]byte{0x05}); !reflect.DeepEqual(got, []key{{kind: keyExternalEditor}}) {
+		t.Fatalf("split ctrl+x ctrl+e sequence = %#v", got)
+	}
+}
+
+func TestKeyDecoderFlushesLoneCtrlX(t *testing.T) {
+	var decoder keyDecoder
+	_ = decoder.feed([]byte{0x18})
+	if got := decoder.flushPending(time.Now().Add(time.Second)); len(got) != 0 {
+		t.Fatalf("flushed ctrl+x emitted key: %#v", got)
+	}
+	got := decoder.feed([]byte{0x05})
+	want := []key{{kind: keyEnd}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("post-flush ctrl+e = %#v, want %#v", got, want)
 	}
 }

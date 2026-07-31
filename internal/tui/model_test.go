@@ -195,7 +195,8 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 	for _, expected := range []string{
 		"╭─ Ready when you are",
 		"Start with a question, @ to find a file, or / for commands.",
-		"enter send  ·  ctrl+n newline  ·  tab build/plan/chat",
+		"enter send  ·  ctrl+n newline  ·  f4/alt+e editor",
+		"tab build/plan/chat  ·  f2 raw/md",
 		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 		"╰─",
 	} {
