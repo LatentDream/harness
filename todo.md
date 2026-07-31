@@ -15,7 +15,7 @@ FIND A BETTER NAME FOR THIS PROJECT
 - [ ] `:reasoning` command to control the reasoning level
 - [ ] `:debug` command to toggle debug mode
 - [ ] `:load` command to load a session from a file
-- [ ] Add a title system (small llm call to generate a title for the session)
+- [x] Add a title system (small llm call to generate a title for the session)
 - [ ] Auth (as now I need to auth using opencode lol)
 - [ ] First touch: proper way to add auth, and generate the config in ~/.harness/config.json
 - [ ] New tool: webfetch

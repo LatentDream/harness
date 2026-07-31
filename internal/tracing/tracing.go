@@ -166,33 +166,35 @@ const (
 type Kind string
 
 const (
-	KindRunStarted       Kind = "run.started"
-	KindRunEnded         Kind = "run.ended"
-	KindTurnStarted      Kind = "turn.started"
-	KindTurnEnded        Kind = "turn.ended"
-	KindUserInput        Kind = "user.input"
-	KindCommandStarted   Kind = "command.started"
-	KindCommandEnded     Kind = "command.ended"
-	KindLLMRequest       Kind = "llm.request"
-	KindLLMResponse      Kind = "llm.response"
-	KindLLMError         Kind = "llm.error"
-	KindAssistantMessage Kind = "assistant.message"
-	KindToolStarted      Kind = "tool.started"
-	KindToolEnded        Kind = "tool.ended"
-	KindSessionRollback  Kind = "session.rollback"
-	KindSessionSnapshot  Kind = "session.snapshot"
-	KindArtifactObserved Kind = "artifact.observed"
-	KindOutput           Kind = "io.output"
-	KindError            Kind = "error"
+	KindRunStarted          Kind = "run.started"
+	KindRunEnded            Kind = "run.ended"
+	KindTurnStarted         Kind = "turn.started"
+	KindTurnEnded           Kind = "turn.ended"
+	KindUserInput           Kind = "user.input"
+	KindCommandStarted      Kind = "command.started"
+	KindCommandEnded        Kind = "command.ended"
+	KindLLMRequest          Kind = "llm.request"
+	KindLLMResponse         Kind = "llm.response"
+	KindLLMError            Kind = "llm.error"
+	KindAssistantMessage    Kind = "assistant.message"
+	KindToolStarted         Kind = "tool.started"
+	KindToolEnded           Kind = "tool.ended"
+	KindSessionRollback     Kind = "session.rollback"
+	KindSessionSnapshot     Kind = "session.snapshot"
+	KindSessionTitleUpdated Kind = "session.title.updated"
+	KindArtifactObserved    Kind = "artifact.observed"
+	KindOutput              Kind = "io.output"
+	KindError               Kind = "error"
 )
 
 type SpanKind string
 
 const (
-	SpanTurn     SpanKind = "turn"
-	SpanCommand  SpanKind = "command"
-	SpanLLMCall  SpanKind = "llm.call"
-	SpanToolCall SpanKind = "tool.call"
+	SpanTurn         SpanKind = "turn"
+	SpanCommand      SpanKind = "command"
+	SpanLLMCall      SpanKind = "llm.call"
+	SpanToolCall     SpanKind = "tool.call"
+	SpanSessionTitle SpanKind = "session.title"
 )
 
 // Session returns the conversation from the latest session snapshot.

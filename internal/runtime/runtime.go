@@ -18,6 +18,7 @@ import (
 	"latentdream/harness/internal/runtime/execution"
 	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/session/llm"
+	sessiontitle "latentdream/harness/internal/session/title"
 	"latentdream/harness/internal/tool"
 	"latentdream/harness/internal/tool/model"
 	"latentdream/harness/internal/tracing"
@@ -46,6 +47,16 @@ type Runtime struct {
 	sessionTitle     string
 	loadedSession    bool
 	pendingSessionID string
+	titleGenerator   TitleGenerator
+	titleUpdater     TitleUpdater
+}
+
+type TitleGenerator interface {
+	Generate(context.Context, string) (string, error)
+}
+
+type TitleUpdater interface {
+	SetTitle(context.Context, string) (string, error)
 }
 
 type Options struct {
@@ -56,6 +67,8 @@ type Options struct {
 	InitialSession *session.Session
 	SessionID      string
 	SessionTitle   string
+	TitleGenerator TitleGenerator
+	TitleUpdater   TitleUpdater
 }
 
 func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, options Options) *Runtime {
@@ -66,21 +79,23 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 		options.Clipboard = clipboard.NewSystem()
 	}
 	r := &Runtime{
-		id:           uuid.New(),
-		Provider:     aiProvider,
-		Tools:        tool.NewDefault(),
-		ChatTools:    options.ChatTools,
-		receiver:     receiver,
-		output:       output,
-		commands:     options.Commands,
-		clipboard:    options.Clipboard,
-		resetUI:      options.ResetFrontend,
-		sessionID:    options.SessionID,
-		sessionTitle: options.SessionTitle,
+		id:             uuid.New(),
+		Provider:       aiProvider,
+		Tools:          tool.NewDefault(),
+		ChatTools:      options.ChatTools,
+		receiver:       receiver,
+		output:         output,
+		commands:       options.Commands,
+		clipboard:      options.Clipboard,
+		resetUI:        options.ResetFrontend,
+		sessionID:      options.SessionID,
+		sessionTitle:   options.SessionTitle,
+		titleGenerator: options.TitleGenerator,
+		titleUpdater:   options.TitleUpdater,
 	}
 	if options.InitialSession != nil {
 		r.Session = cloneSession(*options.InitialSession)
-		r.loadedSession = len(options.InitialSession.Conversation) > 0
+		r.loadedSession = options.SessionID != "" || len(options.InitialSession.Conversation) > 0 || strings.TrimSpace(options.SessionTitle) != ""
 	}
 	r.commands.Register(command.NewCopyCmd(r.latestCopyableMessage, r.clipboard))
 	r.commands.Register(command.NewModelCmd(r.Provider))
@@ -280,6 +295,7 @@ func (r *Runtime) handleTurn(ctx context.Context, submission input.Submission) e
 	}
 
 	rollbackIndex := len(r.Session.Conversation)
+	shouldCreateTitle := r.sessionTitle == "" && countUserMessages(r.Session.Conversation) == 0
 	r.Session.Conversation = append(r.Session.Conversation, llm.Message{Role: llm.RoleUser, Content: submission.Text})
 
 	response, inferenceErr := r.inference(ctx, turnID, submission.Mode)
@@ -305,7 +321,13 @@ func (r *Runtime) handleTurn(ctx context.Context, submission input.Submission) e
 	}
 
 	turn.End(nil, response, r.sessionState())
-	return turn.Checkpoint()
+	if err := turn.Checkpoint(); err != nil {
+		return err
+	}
+	if shouldCreateTitle {
+		r.createTitle(ctx, submission.Text)
+	}
+	return nil
 }
 
 func (r *Runtime) inference(ctx context.Context, turnID string, mode input.Mode) (string, error) {
@@ -410,6 +432,42 @@ func (r *Runtime) isCommand(text string) bool {
 
 func (r *Runtime) sessionState() tracing.SessionState {
 	return tracing.SessionState{Conversation: r.Session.Conversation}
+}
+
+func (r *Runtime) createTitle(ctx context.Context, prompt string) {
+	if r.titleGenerator == nil || r.titleUpdater == nil || strings.TrimSpace(prompt) == "" {
+		return
+	}
+	title, err := r.titleGenerator.Generate(ctx, prompt)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		title = sessiontitle.Fallback(prompt)
+	}
+	persisted, err := r.titleUpdater.SetTitle(ctx, title)
+	if err != nil {
+		return
+	}
+	r.sessionTitle = persisted
+	tracing.Record(ctx, tracing.Event{Kind: tracing.KindSessionTitleUpdated, Payload: struct {
+		SessionID string `json:"sessionId"`
+		Title     string `json:"title"`
+	}{SessionID: r.sessionID, Title: persisted}})
+	_ = execution.Emit(ctx, r.output, input.Event{
+		Kind: input.EventSessionTitleChanged, SessionID: r.sessionID, SessionTitle: persisted,
+	})
+	_ = tracing.Checkpoint(ctx)
+}
+
+func countUserMessages(messages []llm.Message) int {
+	count := 0
+	for _, message := range messages {
+		if message.Role == llm.RoleUser {
+			count++
+		}
+	}
+	return count
 }
 
 func (r *Runtime) sessionLoadedEvent() input.Event {

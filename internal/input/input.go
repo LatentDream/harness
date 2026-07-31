@@ -33,19 +33,20 @@ type Sink interface {
 type EventKind string
 
 const (
-	EventOutput             EventKind = "output"
-	EventStatus             EventKind = "status"
-	EventAssistantStarted   EventKind = "assistant.started"
-	EventAssistantDelta     EventKind = "assistant.delta"
-	EventAssistantCompleted EventKind = "assistant.completed"
-	EventAssistantAborted   EventKind = "assistant.aborted"
-	EventInferenceStarted   EventKind = "inference.started"
-	EventInferenceEnded     EventKind = "inference.ended"
-	EventToolStarted        EventKind = "tool.started"
-	EventToolCompleted      EventKind = "tool.completed"
-	EventProviderSelection  EventKind = "provider.selection"
-	EventSessionReset       EventKind = "session.reset"
-	EventSessionLoaded      EventKind = "session.loaded"
+	EventOutput              EventKind = "output"
+	EventStatus              EventKind = "status"
+	EventAssistantStarted    EventKind = "assistant.started"
+	EventAssistantDelta      EventKind = "assistant.delta"
+	EventAssistantCompleted  EventKind = "assistant.completed"
+	EventAssistantAborted    EventKind = "assistant.aborted"
+	EventInferenceStarted    EventKind = "inference.started"
+	EventInferenceEnded      EventKind = "inference.ended"
+	EventToolStarted         EventKind = "tool.started"
+	EventToolCompleted       EventKind = "tool.completed"
+	EventProviderSelection   EventKind = "provider.selection"
+	EventSessionReset        EventKind = "session.reset"
+	EventSessionLoaded       EventKind = "session.loaded"
+	EventSessionTitleChanged EventKind = "session.title.changed"
 )
 
 type Stream string

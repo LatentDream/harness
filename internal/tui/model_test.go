@@ -522,3 +522,26 @@ func TestLocalShellResultPopulatesNextMessageAndTranscript(t *testing.T) {
 		t.Fatalf("shell result not inserted into next message: %q", got)
 	}
 }
+
+func TestModelUpdatesSessionTitleAndIgnoresStaleEvents(t *testing.T) {
+	state := model{provider: "codex", modelName: "test", workingDirectory: "/workspace"}
+	state.apply(input.Event{Kind: input.EventSessionLoaded, SessionID: "session-123456", SessionTitle: "Initial"})
+	state.apply(input.Event{Kind: input.EventSessionTitleChanged, SessionID: "session-123456", SessionTitle: "Fix Parser Commas"})
+	if state.sessionTitle != "Fix Parser Commas" {
+		t.Fatalf("session title = %q", state.sessionTitle)
+	}
+	if header := stripANSI(state.renderHeader(80)[0]); !strings.Contains(header, "Fix Parser Commas · codex/test") {
+		t.Fatalf("header = %q", header)
+	}
+	state.apply(input.Event{Kind: input.EventSessionTitleChanged, SessionID: "another", SessionTitle: "Stale"})
+	if state.sessionTitle != "Fix Parser Commas" {
+		t.Fatalf("stale event changed title to %q", state.sessionTitle)
+	}
+}
+
+func TestHeaderUsesUntitledSessionIDFallback(t *testing.T) {
+	state := model{provider: "codex", modelName: "test", workingDirectory: "/workspace", sessionID: "12345678-abcd"}
+	if header := stripANSI(state.renderHeader(80)[0]); !strings.Contains(header, "Untitled (12345678)") {
+		t.Fatalf("header = %q", header)
+	}
+}

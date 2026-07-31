@@ -58,8 +58,11 @@ harness -c
 ```
 
 Sessions are scoped to their working directory. A session ID from another folder
-is never considered for continuation or switching. Multiple sessions per folder
-are retained. List them or switch by exact title, full ID, or a unique ID prefix:
+is never considered for continuation or switching. After the first successful
+turn, Harness uses a small tool-free model request to create a concise session
+title from the initial prompt. If that request fails, it derives a deterministic
+title from the prompt instead. Multiple sessions per folder are retained. List
+them or switch by exact title, full ID, or a unique ID prefix:
 
 ```text
 /switch

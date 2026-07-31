@@ -170,7 +170,7 @@ Initial event kinds are:
 - `llm.request`, `llm.response`, and `llm.error`
 - `tool.started` and `tool.ended`
 - `assistant.message`
-- `session.rollback` and `session.snapshot`
+- `session.rollback`, `session.snapshot`, and `session.title.updated`
 - `artifact.observed`
 - `io.output` and `error`
 
@@ -178,7 +178,7 @@ Initial event kinds are:
 is recorded as `assistant.started`, one or more `assistant.delta` events, and
 `assistant.completed` or `assistant.aborted`. These events carry the turn ID and
 LLM round so a terminal or server can reconstruct concurrent presentation
-lifecycles. Provider calls also emit `inference.started` and `inference.ended`,
+lifecycles. Session title generation uses a distinct `session.title` span and does not emit assistant transcript events. Provider calls also emit `inference.started` and `inference.ended`,
 and tool calls emit presentation-level `tool.started` and `tool.completed`
 events correlated by tool-call ID. Tool presentation payloads contain only safe,
 bounded display metadata rather than raw arguments or results. Status changes

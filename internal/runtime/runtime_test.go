@@ -1127,3 +1127,82 @@ func (f *fakeRuntimeClipboard) Copy(_ context.Context, text string) error {
 	f.text = text
 	return f.err
 }
+
+func TestRunCreatesTitleAfterFirstSuccessfulTurn(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "fix parser commas"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}}}}
+	generator := &titleGeneratorStub{title: "Fix Parser Commas"}
+	updater := &titleUpdaterStub{}
+	runtime := New(aiProvider, userInput, userInput, Options{
+		SessionID: "session-id", TitleGenerator: generator, TitleUpdater: updater,
+	})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if generator.calls != 1 || generator.prompt != "fix parser commas" || updater.title != "Fix Parser Commas" {
+		t.Fatalf("generator=%#v updater=%#v", generator, updater)
+	}
+	if len(runtime.Session.Conversation) != 3 {
+		t.Fatalf("title generation changed conversation: %#v", runtime.Session.Conversation)
+	}
+	found := false
+	for _, event := range userInput.events {
+		if event.Kind == input.EventSessionTitleChanged && event.SessionTitle == "Fix Parser Commas" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("title event missing: %#v", userInput.events)
+	}
+}
+
+func TestRunUsesFallbackAndDoesNotRetitleExistingSession(t *testing.T) {
+	t.Run("fallback", func(t *testing.T) {
+		userInput := &scriptedInput{receives: []receiveResult{{text: "investigate parser session restore behavior now"}, {text: "/exit"}}}
+		aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}}}}
+		generator := &titleGeneratorStub{err: errors.New("offline")}
+		updater := &titleUpdaterStub{}
+		runtime := New(aiProvider, userInput, userInput, Options{TitleGenerator: generator, TitleUpdater: updater})
+		if err := runtime.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if updater.title != "investigate parser session restore behavior now" {
+			t.Fatalf("fallback title = %q", updater.title)
+		}
+	})
+	t.Run("existing", func(t *testing.T) {
+		userInput := &scriptedInput{receives: []receiveResult{{text: "first"}, {text: "/exit"}}}
+		aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}}}}
+		generator := &titleGeneratorStub{title: "ignored"}
+		runtime := New(aiProvider, userInput, userInput, Options{SessionTitle: "Existing", TitleGenerator: generator, TitleUpdater: &titleUpdaterStub{}})
+		if err := runtime.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if generator.calls != 0 {
+			t.Fatalf("generator called %d times", generator.calls)
+		}
+	})
+}
+
+type titleGeneratorStub struct {
+	title  string
+	prompt string
+	err    error
+	calls  int
+}
+
+func (g *titleGeneratorStub) Generate(_ context.Context, prompt string) (string, error) {
+	g.calls++
+	g.prompt = prompt
+	return g.title, g.err
+}
+
+type titleUpdaterStub struct {
+	title string
+	err   error
+}
+
+func (u *titleUpdaterStub) SetTitle(_ context.Context, title string) (string, error) {
+	u.title = title
+	return title, u.err
+}

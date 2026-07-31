@@ -101,6 +101,8 @@ type model struct {
 	height              int
 	provider            string
 	modelName           string
+	sessionID           string
+	sessionTitle        string
 	workingDirectory    string
 	username            string
 	tip                 string
@@ -512,6 +514,13 @@ func (m *model) apply(event input.Event) {
 		if event.Model != "" {
 			m.modelName = event.Model
 		}
+	case input.EventSessionTitleChanged:
+		if m.sessionID == "" || event.SessionID == "" || event.SessionID == m.sessionID {
+			if event.SessionID != "" {
+				m.sessionID = event.SessionID
+			}
+			m.sessionTitle = event.SessionTitle
+		}
 	case input.EventSessionReset, input.EventSessionLoaded:
 		m.blocks = nil
 		m.streams = make(map[streamKey]int)
@@ -524,7 +533,13 @@ func (m *model) apply(event input.Event) {
 		m.scrollOffset = 0
 		m.editor.history = nil
 		m.editor.historyIndex = 0
+		if event.Kind == input.EventSessionReset {
+			m.sessionID = ""
+			m.sessionTitle = ""
+		}
 		if event.Kind == input.EventSessionLoaded {
+			m.sessionID = event.SessionID
+			m.sessionTitle = event.SessionTitle
 			for _, message := range event.Messages {
 				switch message.Role {
 				case "user":

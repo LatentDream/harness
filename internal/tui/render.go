@@ -80,6 +80,17 @@ func (m *model) renderHeader(width int) []string {
 	if selection == "/" {
 		selection = "no provider"
 	}
+	title := sanitizeInline(strings.TrimSpace(m.sessionTitle))
+	if title == "" && m.sessionID != "" {
+		id := m.sessionID
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		title = "Untitled (" + id + ")"
+	}
+	if title != "" {
+		selection = title + " · " + selection
+	}
 	plainLeft := "HARNESS  " + selection
 	left := brand + "  " + m.colors.wrap(ansiGray, selection)
 	cwd := displayWorkingDirectory(m.workingDirectory)

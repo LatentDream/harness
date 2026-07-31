@@ -261,6 +261,62 @@ func (s *FileStore) Activate(ctx context.Context, workspace, id string) error {
 	return writeJSONAtomic(s.workspaceManifestPath(workspace), index)
 }
 
+// SetTitle updates session metadata while preserving conversation activity ordering.
+func (s *FileStore) SetTitle(ctx context.Context, workspace, sessionID, title string) (SessionRecord, error) {
+	if err := ctxErr(ctx); err != nil {
+		return SessionRecord{}, err
+	}
+	workspace, err := CanonicalWorkingDirectory(workspace)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	title = strings.Join(strings.Fields(title), " ")
+	if title == "" {
+		return SessionRecord{}, errors.New("session title must not be empty")
+	}
+	if len([]rune(title)) > 64 {
+		return SessionRecord{}, errors.New("session title must not exceed 64 characters")
+	}
+	for _, character := range title {
+		if character < 0x20 || character == 0x7f {
+			return SessionRecord{}, errors.New("session title contains a control character")
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	manifest, err := s.readSession(sessionID)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && manifest.WorkspacePath != workspace) {
+		return SessionRecord{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	manifest.Title = title
+	if err := writeJSONAtomic(s.sessionManifestPath(sessionID), manifest); err != nil {
+		return SessionRecord{}, fmt.Errorf("update session title: %w", err)
+	}
+	index, err := s.readWorkspace(workspace)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	found := false
+	for i := range index.Sessions {
+		if index.Sessions[i].ID == sessionID {
+			index.Sessions[i].Title = title
+			found = true
+			break
+		}
+	}
+	if !found {
+		return SessionRecord{}, ErrSessionNotFound
+	}
+	if err := writeJSONAtomic(s.workspaceManifestPath(workspace), index); err != nil {
+		return SessionRecord{}, fmt.Errorf("update workspace session title: %w", err)
+	}
+	return SessionRecord{ID: manifest.ID, Title: title, CreatedAt: manifest.CreatedAt, UpdatedAt: manifest.UpdatedAt}, nil
+}
+
 func (s *FileStore) save(ctx context.Context, sessionID string, state SessionState) error {
 	if err := ctxErr(ctx); err != nil {
 		return err

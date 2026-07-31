@@ -39,6 +39,14 @@ Mode instructions are request-local and are not added to conversation history.
 
 Type `!` at the start of an empty prompt to switch to `[Shell] $`. The text you enter runs locally in the configured working directory using `/bin/bash -lc`. Harness captures stdout, stderr, exit code, and timeout state, adds a shell block to the transcript, and pre-fills the next normal prompt with the captured output. Long command output is truncated before insertion so it can be sent to the model as context.
 
+## Session titles
+
+After the first successful turn in a new session, Harness generates a concise
+title from the initial user prompt. Title generation is a separate, tool-free
+model request and is not added to conversation history. A deterministic title is
+used if model generation fails. The persisted title appears in the header and in
+`/switch` results.
+
 ## Commands
 
 - `:new` or `/new` closes the current persisted session and starts a fresh one.

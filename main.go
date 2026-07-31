@@ -19,6 +19,7 @@ import (
 	"latentdream/harness/internal/runtime"
 	"latentdream/harness/internal/runtime/command"
 	"latentdream/harness/internal/session"
+	sessiontitle "latentdream/harness/internal/session/title"
 	"latentdream/harness/internal/tracing"
 	"latentdream/harness/internal/tui"
 
@@ -99,7 +100,7 @@ func run() int {
 	selection := aiProvider.Current()
 	commands := command.DefaultRegistry()
 	commands.Register(command.NewSwitchCmd(workspaceSessionResolver{store: store, workspace: workingDirectory}))
-	runtimeOptions := runtime.Options{Commands: commands, Clipboard: clipboard.NewSystem(), InitialSession: &initial, SessionID: record.ID, SessionTitle: record.Title}
+	runtimeOptions := runtime.Options{Commands: commands, Clipboard: clipboard.NewSystem(), InitialSession: &initial, SessionID: record.ID, SessionTitle: record.Title, TitleGenerator: sessiontitle.NewGenerator(aiProvider)}
 
 	if tui.IsInteractive(os.Stdin, os.Stdout) {
 		frontend, frontendErr := tui.New(os.Stdin, os.Stdout, os.Stderr, tui.Options{
@@ -153,12 +154,12 @@ func runPersistentSessions(
 	output input.Sink,
 	options runtime.Options,
 ) error {
-	first := true
 	for {
 		options.InitialSession = &initial
 		options.SessionID = record.ID
 		options.SessionTitle = record.Title
-		options.ResetFrontend = !first || len(initial.Conversation) > 0
+		options.TitleUpdater = workspaceTitleUpdater{store: store, workspace: workingDirectory, sessionID: record.ID}
+		options.ResetFrontend = true
 		sessionCtx := tracing.Init(ctx, tracing.SessionRecorder(store, record.ID))
 		harness := runtime.New(aiProvider, receiver, output, options)
 		action, err := harness.RunSession(sessionCtx)
@@ -191,8 +192,21 @@ func runPersistentSessions(
 		if err := logging.ConfigureForSession(loggingConfig, record.ID); err != nil {
 			return fmt.Errorf("configure session logging: %w", err)
 		}
-		first = false
 	}
+}
+
+type workspaceTitleUpdater struct {
+	store     *tracing.FileStore
+	workspace string
+	sessionID string
+}
+
+func (u workspaceTitleUpdater) SetTitle(ctx context.Context, title string) (string, error) {
+	record, err := u.store.SetTitle(ctx, u.workspace, u.sessionID, title)
+	if err != nil {
+		return "", err
+	}
+	return record.Title, nil
 }
 
 type workspaceSessionResolver struct {

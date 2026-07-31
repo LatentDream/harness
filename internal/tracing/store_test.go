@@ -152,3 +152,38 @@ func TestCanonicalWorkingDirectoryResolvesSymlinks(t *testing.T) {
 		t.Fatalf("canonical path = %q, want %q", canonical, expected)
 	}
 }
+
+func TestFileStoreSetTitleUpdatesSessionAndWorkspaceIndex(t *testing.T) {
+	workspace := t.TempDir()
+	store, _ := NewFileStore(t.TempDir())
+	record, err := store.Create(context.Background(), workspace, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.SetTitle(context.Background(), workspace, record.ID, "Fix Parser Commas")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "Fix Parser Commas" || !updated.UpdatedAt.Equal(record.UpdatedAt) {
+		t.Fatalf("updated record = %#v", updated)
+	}
+	loaded, _, err := store.Load(context.Background(), workspace, record.ID)
+	if err != nil || loaded.Title != "Fix Parser Commas" {
+		t.Fatalf("loaded record = %#v, %v", loaded, err)
+	}
+	resolved, err := store.Resolve(context.Background(), workspace, "Fix Parser Commas")
+	if err != nil || resolved.ID != record.ID {
+		t.Fatalf("resolved record = %#v, %v", resolved, err)
+	}
+}
+
+func TestFileStoreSetTitleRejectsAnotherWorkspace(t *testing.T) {
+	store, _ := NewFileStore(t.TempDir())
+	record, err := store.Create(context.Background(), t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetTitle(context.Background(), t.TempDir(), record.ID, "Wrong Workspace"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("SetTitle returned %v", err)
+	}
+}
