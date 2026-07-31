@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -36,18 +37,25 @@ type Runtime struct {
 	Session     session.Session
 	ChatTools   []model.Tool
 
-	receiver  input.Receiver
-	output    input.Sink
-	commands  *command.Registry
-	clipboard command.Clipboard
-	resetUI   bool
+	receiver         input.Receiver
+	output           input.Sink
+	commands         *command.Registry
+	clipboard        command.Clipboard
+	resetUI          bool
+	sessionID        string
+	sessionTitle     string
+	loadedSession    bool
+	pendingSessionID string
 }
 
 type Options struct {
-	Commands      *command.Registry
-	Clipboard     command.Clipboard
-	ResetFrontend bool
-	ChatTools     []model.Tool
+	Commands       *command.Registry
+	Clipboard      command.Clipboard
+	ResetFrontend  bool
+	ChatTools      []model.Tool
+	InitialSession *session.Session
+	SessionID      string
+	SessionTitle   string
 }
 
 func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, options Options) *Runtime {
@@ -58,20 +66,28 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 		options.Clipboard = clipboard.NewSystem()
 	}
 	r := &Runtime{
-		id:        uuid.New(),
-		Provider:  aiProvider,
-		Tools:     tool.NewDefault(),
-		ChatTools: options.ChatTools,
-		receiver:  receiver,
-		output:    output,
-		commands:  options.Commands,
-		clipboard: options.Clipboard,
-		resetUI:   options.ResetFrontend,
+		id:           uuid.New(),
+		Provider:     aiProvider,
+		Tools:        tool.NewDefault(),
+		ChatTools:    options.ChatTools,
+		receiver:     receiver,
+		output:       output,
+		commands:     options.Commands,
+		clipboard:    options.Clipboard,
+		resetUI:      options.ResetFrontend,
+		sessionID:    options.SessionID,
+		sessionTitle: options.SessionTitle,
+	}
+	if options.InitialSession != nil {
+		r.Session = cloneSession(*options.InitialSession)
+		r.loadedSession = len(options.InitialSession.Conversation) > 0
 	}
 	r.commands.Register(command.NewCopyCmd(r.latestCopyableMessage, r.clipboard))
 	r.commands.Register(command.NewModelCmd(r.Provider))
 	return r
 }
+
+func (r *Runtime) SwitchSessionID() string { return r.pendingSessionID }
 
 func (r *Runtime) Run(ctx context.Context) (runErr error) {
 	_, runErr = r.RunSession(ctx)
@@ -84,7 +100,7 @@ func (r *Runtime) RunSession(ctx context.Context) (action command.Action, runErr
 		ctx = context.Background()
 	}
 	workingDirectory, _ := os.Getwd()
-	ctx, trace, err := tracing.BeginRun(ctx, tracing.RunMeta{WorkingDirectory: workingDirectory})
+	ctx, trace, err := tracing.BeginRun(ctx, tracing.RunMeta{SessionID: r.sessionID, RunID: r.id.String(), WorkingDirectory: workingDirectory})
 	if err != nil {
 		return command.ActionContinue, fmt.Errorf("start trace: %w", err)
 	}
@@ -98,7 +114,11 @@ func (r *Runtime) RunSession(ctx context.Context) (action command.Action, runErr
 		return command.ActionContinue, err
 	}
 	if r.resetUI {
-		if err := execution.Emit(ctx, r.output, input.Event{Kind: input.EventSessionReset}); err != nil {
+		event := input.Event{Kind: input.EventSessionReset}
+		if r.loadedSession {
+			event = r.sessionLoadedEvent()
+		}
+		if err := execution.Emit(ctx, r.output, event); err != nil {
 			return command.ActionContinue, fmt.Errorf("reset session frontend: %w", err)
 		}
 		if err := trace.Checkpoint(); err != nil {
@@ -157,6 +177,10 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) (command
 			}
 			if action == command.ActionNewSession {
 				trace.SetReason(tracing.EndReasonNewSession)
+				return action, nil
+			}
+			if action == command.ActionSwitchSession {
+				trace.SetReason(tracing.EndReasonSessionSwitch)
 				return action, nil
 			}
 			continue
@@ -240,6 +264,9 @@ func (r *Runtime) handleCommand(ctx context.Context, text string, commandText st
 			Provider: result.Provider,
 			Model:    result.Model,
 		}))
+	}
+	if result.Action == command.ActionSwitchSession {
+		r.pendingSessionID = result.SessionID
 	}
 	span.End(writeErr, result)
 	return result.Action, errors.Join(writeErr, span.Checkpoint())
@@ -383,6 +410,28 @@ func (r *Runtime) isCommand(text string) bool {
 
 func (r *Runtime) sessionState() tracing.SessionState {
 	return tracing.SessionState{Conversation: r.Session.Conversation}
+}
+
+func (r *Runtime) sessionLoadedEvent() input.Event {
+	messages := make([]input.PresentationMessage, 0, len(r.Session.Conversation))
+	for _, message := range r.Session.Conversation {
+		if (message.Role == llm.RoleUser || message.Role == llm.RoleAssistant) && strings.TrimSpace(message.Content) != "" {
+			messages = append(messages, input.PresentationMessage{Role: message.Role, Content: message.Content})
+		}
+	}
+	return input.Event{Kind: input.EventSessionLoaded, SessionID: r.sessionID, SessionTitle: r.sessionTitle, Messages: messages}
+}
+
+func cloneSession(source session.Session) session.Session {
+	conversation := make([]llm.Message, len(source.Conversation))
+	for i, message := range source.Conversation {
+		conversation[i] = message
+		conversation[i].ToolCalls = append([]llm.ToolCall(nil), message.ToolCalls...)
+		for j := range conversation[i].ToolCalls {
+			conversation[i].ToolCalls[j].Arguments = append(json.RawMessage(nil), message.ToolCalls[j].Arguments...)
+		}
+	}
+	return session.Session{Conversation: conversation}
 }
 
 func normalizeMode(mode input.Mode) (input.Mode, error) {

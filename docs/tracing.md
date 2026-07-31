@@ -1,12 +1,14 @@
 # Tracing
 
-Tracing is the detailed record of what happened during one interactive harness
-run. A run contains zero or more user turns; each turn may contain multiple LLM
+A session is a persistent conversation that may be continued across application
+launches. A run is one period in which a process has that session open. Tracing
+is the detailed record of a run, which contains zero or more user turns; each turn may contain multiple LLM
 calls and tool invocations.
 
 ```text
-Run: one Runtime.Run invocation
-  Turn: one user prompt and its outcome
+Session: one persistent conversation
+  Run: one Runtime.Run invocation
+    Turn: one user prompt and its outcome
     LLM call: one provider request
       Tool call: one tool invocation
 ```
@@ -197,12 +199,14 @@ versions.
 A filesystem implementation should use an append-only layout:
 
 ```text
-<trace-directory>/<trace-id>/
-  manifest.json
-  events.jsonl
-  snapshots/
-  blobs/
-  outcome.json
+<trace-directory>/
+  workspaces/<canonical-path-hash>/manifest.json
+  sessions/<session-id>/
+    manifest.json
+    snapshots/
+    runs/<run-id>/
+      events.jsonl
+      outcome.json
 ```
 
 - Allocate sequence numbers when events are committed to storage.

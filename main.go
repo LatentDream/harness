@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime"
 	"latentdream/harness/internal/runtime/command"
+	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/tracing"
 	"latentdream/harness/internal/tui"
 
@@ -36,15 +38,56 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	continueSession, err := parseStartupArgs(os.Args[1:])
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 2
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		return 1
 	}
 
-	sessionID := uuid.NewString()
-	loggingConfig := loggingConfigForSession(cfg.Logging, sessionID)
-	logging.ConfigureOrExitForSession(loggingConfig, sessionID)
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve working directory: %v\n", err)
+		return 1
+	}
+	workingDirectory, err = tracing.CanonicalWorkingDirectory(workingDirectory)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve working directory: %v\n", err)
+		return 1
+	}
+	storeRoot, err := tracing.StoreRootFromSnapshotPath(cfg.Tracing.FilePath)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve session storage: %v\n", err)
+		return 1
+	}
+	store, err := tracing.NewFileStore(storeRoot)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize session storage: %v\n", err)
+		return 1
+	}
+
+	var record tracing.SessionRecord
+	var initial session.Session
+	if continueSession {
+		record, initial, err = store.Continue(ctx, workingDirectory)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to continue session: %v\n", err)
+			return 1
+		}
+	} else {
+		record, err = store.Create(ctx, workingDirectory, "")
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to create session: %v\n", err)
+			return 1
+		}
+	}
+
+	loggingConfig := loggingConfigForSession(cfg.Logging, record.ID)
+	logging.ConfigureOrExitForSession(loggingConfig, record.ID)
 
 	aiProvider, err := provider.New(cfg.Providers)
 	if err != nil {
@@ -55,31 +98,25 @@ func run() int {
 
 	selection := aiProvider.Current()
 	commands := command.DefaultRegistry()
-	runtimeOptions := runtime.Options{Commands: commands, Clipboard: clipboard.NewSystem()}
+	commands.Register(command.NewSwitchCmd(workspaceSessionResolver{store: store, workspace: workingDirectory}))
+	runtimeOptions := runtime.Options{Commands: commands, Clipboard: clipboard.NewSystem(), InitialSession: &initial, SessionID: record.ID, SessionTitle: record.Title}
 
 	if tui.IsInteractive(os.Stdin, os.Stdout) {
-		workingDirectory, _ := os.Getwd()
-
-		frontend, err := tui.New(os.Stdin, os.Stdout, os.Stderr, tui.Options{
-			Provider:         selection.Provider,
-			Model:            selection.Model,
-			WorkingDirectory: workingDirectory,
-			Commands:         commands,
-			Models:           aiProvider.Available(),
+		frontend, frontendErr := tui.New(os.Stdin, os.Stdout, os.Stderr, tui.Options{
+			Provider: selection.Provider, Model: selection.Model, WorkingDirectory: workingDirectory,
+			Commands: commands, Models: aiProvider.Available(),
 		})
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize terminal UI: %v\n", err)
+		if frontendErr != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize terminal UI: %v\n", frontendErr)
 			return 1
 		}
-
 		err = frontend.Run(ctx, func(runCtx context.Context) error {
-			return runSessions(runCtx, cfg, sessionID, aiProvider, frontend, frontend, runtimeOptions)
+			return runPersistentSessions(runCtx, cfg, store, workingDirectory, record, initial, aiProvider, frontend, frontend, runtimeOptions)
 		})
-
 	} else {
 		frontend := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
 		_ = frontend.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
-		err = runSessions(ctx, cfg, sessionID, aiProvider, frontend, frontend, runtimeOptions)
+		err = runPersistentSessions(ctx, cfg, store, workingDirectory, record, initial, aiProvider, frontend, frontend, runtimeOptions)
 	}
 
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -88,6 +125,99 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+func parseStartupArgs(args []string) (bool, error) {
+	set := flag.NewFlagSet("harness", flag.ContinueOnError)
+	set.SetOutput(os.Stderr)
+	resume := set.Bool("continue", false, "continue the active session for this working directory")
+	set.BoolVar(resume, "c", false, "continue the active session for this working directory")
+	if err := set.Parse(args); err != nil {
+		return false, err
+	}
+	if set.NArg() != 0 {
+		return false, fmt.Errorf("unexpected arguments: %s", strings.Join(set.Args(), " "))
+	}
+	return *resume, nil
+}
+
+func runPersistentSessions(
+	ctx context.Context,
+	cfg config.Config,
+	store *tracing.FileStore,
+	workingDirectory string,
+	record tracing.SessionRecord,
+	initial session.Session,
+	aiProvider provider.Provider,
+	receiver input.Receiver,
+	output input.Sink,
+	options runtime.Options,
+) error {
+	first := true
+	for {
+		options.InitialSession = &initial
+		options.SessionID = record.ID
+		options.SessionTitle = record.Title
+		options.ResetFrontend = !first || len(initial.Conversation) > 0
+		sessionCtx := tracing.Init(ctx, tracing.SessionRecorder(store, record.ID))
+		harness := runtime.New(aiProvider, receiver, output, options)
+		action, err := harness.RunSession(sessionCtx)
+		if err != nil {
+			return err
+		}
+
+		switch action {
+		case command.ActionNewSession:
+			record, err = store.Create(ctx, workingDirectory, "")
+			initial = session.Session{}
+		case command.ActionSwitchSession:
+			targetID := harness.SwitchSessionID()
+			if targetID == "" {
+				return errors.New("switch session command returned an empty session ID")
+			}
+			record, initial, err = store.Load(ctx, workingDirectory, targetID)
+			if err == nil {
+				err = store.Activate(ctx, workingDirectory, targetID)
+			}
+		default:
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("transition session: %w", err)
+		}
+
+		_ = logging.Sync()
+		loggingConfig := loggingConfigForSession(cfg.Logging, record.ID)
+		if err := logging.ConfigureForSession(loggingConfig, record.ID); err != nil {
+			return fmt.Errorf("configure session logging: %w", err)
+		}
+		first = false
+	}
+}
+
+type workspaceSessionResolver struct {
+	store     *tracing.FileStore
+	workspace string
+}
+
+func (r workspaceSessionResolver) ResolveSession(ctx context.Context, selector string) (command.SessionSummary, error) {
+	record, err := r.store.Resolve(ctx, r.workspace, selector)
+	if err != nil {
+		return command.SessionSummary{}, err
+	}
+	return command.SessionSummary{ID: record.ID, Title: record.Title, UpdatedAt: record.UpdatedAt}, nil
+}
+
+func (r workspaceSessionResolver) ListSessions(ctx context.Context) ([]command.SessionSummary, error) {
+	records, err := r.store.List(ctx, r.workspace)
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]command.SessionSummary, len(records))
+	for i, record := range records {
+		summaries[i] = command.SessionSummary{ID: record.ID, Title: record.Title, UpdatedAt: record.UpdatedAt}
+	}
+	return summaries, nil
 }
 
 func runSessions(

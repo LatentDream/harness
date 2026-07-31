@@ -45,6 +45,7 @@ const (
 	EventToolCompleted      EventKind = "tool.completed"
 	EventProviderSelection  EventKind = "provider.selection"
 	EventSessionReset       EventKind = "session.reset"
+	EventSessionLoaded      EventKind = "session.loaded"
 )
 
 type Stream string
@@ -54,17 +55,25 @@ const (
 	StreamStderr Stream = "stderr"
 )
 
+type PresentationMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type Event struct {
-	Kind         EventKind    `json:"kind"`
-	TurnID       string       `json:"turnId,omitempty"`
-	Round        int          `json:"round,omitempty"`
-	Stream       Stream       `json:"stream,omitempty"`
-	Text         string       `json:"text,omitempty"`
-	Provider     string       `json:"provider,omitempty"`
-	Model        string       `json:"model,omitempty"`
-	ToolCallID   string       `json:"toolCallId,omitempty"`
-	ToolName     string       `json:"toolName,omitempty"`
-	ToolActivity ToolActivity `json:"toolActivity,omitempty"`
+	Kind         EventKind             `json:"kind"`
+	TurnID       string                `json:"turnId,omitempty"`
+	Round        int                   `json:"round,omitempty"`
+	Stream       Stream                `json:"stream,omitempty"`
+	Text         string                `json:"text,omitempty"`
+	Provider     string                `json:"provider,omitempty"`
+	Model        string                `json:"model,omitempty"`
+	SessionID    string                `json:"sessionId,omitempty"`
+	SessionTitle string                `json:"sessionTitle,omitempty"`
+	Messages     []PresentationMessage `json:"messages,omitempty"`
+	ToolCallID   string                `json:"toolCallId,omitempty"`
+	ToolName     string                `json:"toolName,omitempty"`
+	ToolActivity ToolActivity          `json:"toolActivity,omitempty"`
 }
 
 // ToolActivity contains presentation-safe tool metadata. It must not contain

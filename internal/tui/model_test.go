@@ -59,6 +59,20 @@ func TestModelResetsTranscriptForNewSession(t *testing.T) {
 	}
 }
 
+func TestModelLoadsRestoredSessionPresentation(t *testing.T) {
+	state := model{streams: make(map[streamKey]int), tools: make(map[toolKey]int)}
+	state.apply(input.Event{Kind: input.EventSessionLoaded, Messages: []input.PresentationMessage{
+		{Role: "user", Content: "old question"},
+		{Role: "assistant", Content: "old answer"},
+	}})
+	if len(state.blocks) != 2 || state.blocks[0].kind != blockUser || state.blocks[1].kind != blockAssistant {
+		t.Fatalf("loaded transcript = %#v", state.blocks)
+	}
+	if len(state.editor.history) != 1 || state.editor.history[0] != "old question" {
+		t.Fatalf("loaded editor history = %#v", state.editor.history)
+	}
+}
+
 func TestInferenceSpinnerIsIndependentFromStatus(t *testing.T) {
 	state := model{width: 40}
 	state.apply(input.Event{Kind: input.EventInferenceStarted})

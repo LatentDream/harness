@@ -512,7 +512,7 @@ func (m *model) apply(event input.Event) {
 		if event.Model != "" {
 			m.modelName = event.Model
 		}
-	case input.EventSessionReset:
+	case input.EventSessionReset, input.EventSessionLoaded:
 		m.blocks = nil
 		m.streams = make(map[streamKey]int)
 		m.tools = make(map[toolKey]int)
@@ -524,6 +524,17 @@ func (m *model) apply(event input.Event) {
 		m.scrollOffset = 0
 		m.editor.history = nil
 		m.editor.historyIndex = 0
+		if event.Kind == input.EventSessionLoaded {
+			for _, message := range event.Messages {
+				switch message.Role {
+				case "user":
+					m.blocks = append(m.blocks, transcriptBlock{kind: blockUser, text: message.Content, mode: input.ModeBuild})
+					m.editor.remember(message.Content)
+				case "assistant":
+					m.blocks = append(m.blocks, transcriptBlock{kind: blockAssistant, text: message.Content, completed: true})
+				}
+			}
+		}
 	}
 }
 

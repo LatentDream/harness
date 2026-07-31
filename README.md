@@ -27,6 +27,8 @@ Harness is a work in progress. See [todo.md](todo.md) for the roadmap.
 - Tool calling support for reading, writing, searching, globbing, and shell commands.
 - Provider/model switching with `:model` or `/model`.
 - New session support with `:new` or `/new`.
+- Resume the active session for the current folder with `--continue` or `-c`.
+- Switch between sessions from the current folder with `:switch` or `/switch`.
 - Copy latest assistant response with `:copy` or `/copy`.
 - Structured tracing and session logging.
 
@@ -44,6 +46,25 @@ Using [just](https://github.com/casey/just):
 just build
 just run
 just test
+```
+
+Harness starts a new persistent session by default. To resume the active session
+created from the same canonical folder path:
+
+```bash
+harness --continue
+# or
+harness -c
+```
+
+Sessions are scoped to their working directory. A session ID from another folder
+is never considered for continuation or switching. Multiple sessions per folder
+are retained. List them or switch by exact title, full ID, or a unique ID prefix:
+
+```text
+/switch
+/switch 91dc7f4a
+/switch implement authentication
 ```
 
 ## Configuration

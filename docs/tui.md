@@ -44,6 +44,9 @@ Type `!` at the start of an empty prompt to switch to `[Shell] $`. The text you 
 - `:new` or `/new` closes the current persisted session and starts a fresh one.
   Conversation history and the TUI transcript are cleared, while the selected
   provider and model remain active.
+- `:switch` or `/switch` lists sessions created in the current working
+  directory. Pass an exact title, full session ID, or unique ID prefix to switch
+  conversations. Sessions from other working directories are never considered.
 - `:help` or `/help` lists all available commands.
 
 ## Pickers

@@ -105,6 +105,8 @@ type SessionSnapshot struct {
 }
 
 type RunMeta struct {
+	SessionID        string            `json:"sessionId,omitempty"`
+	RunID            string            `json:"runId,omitempty"`
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	ConfigPath       string            `json:"configPath,omitempty"`
 	Repository       string            `json:"repository,omitempty"`
@@ -153,11 +155,12 @@ const (
 type EndReason string
 
 const (
-	EndReasonEOF        EndReason = "eof"
-	EndReasonExit       EndReason = "exit"
-	EndReasonNewSession EndReason = "new_session"
-	EndReasonCancelled  EndReason = "cancelled"
-	EndReasonError      EndReason = "error"
+	EndReasonEOF           EndReason = "eof"
+	EndReasonExit          EndReason = "exit"
+	EndReasonNewSession    EndReason = "new_session"
+	EndReasonSessionSwitch EndReason = "session_switch"
+	EndReasonCancelled     EndReason = "cancelled"
+	EndReasonError         EndReason = "error"
 )
 
 type Kind string

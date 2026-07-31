@@ -15,13 +15,15 @@ const (
 	ActionContinue Action = iota
 	ActionExit
 	ActionNewSession
+	ActionSwitchSession
 )
 
 type Result struct {
-	Action   Action
-	Output   string
-	Provider string
-	Model    string
+	Action    Action
+	Output    string
+	Provider  string
+	Model     string
+	SessionID string
 }
 
 type Command interface {

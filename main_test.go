@@ -13,7 +13,10 @@ import (
 	"latentdream/harness/internal/logging"
 	"latentdream/harness/internal/provider"
 	"latentdream/harness/internal/runtime"
+	"latentdream/harness/internal/runtime/command"
+	"latentdream/harness/internal/session"
 	"latentdream/harness/internal/session/llm"
+	"latentdream/harness/internal/tracing"
 )
 
 func TestRunSessionsRotatesPersistenceAndConversation(t *testing.T) {
@@ -80,6 +83,74 @@ func TestRunSessionsRotatesPersistenceAndConversation(t *testing.T) {
 	}
 	if len(rotatedLogs) != 1 {
 		t.Fatalf("expected one isolated rotated log, got %#v", rotatedLogs)
+	}
+}
+
+func TestParseStartupArgs(t *testing.T) {
+	for _, args := range [][]string{{"--continue"}, {"-c"}} {
+		continued, err := parseStartupArgs(args)
+		if err != nil || !continued {
+			t.Fatalf("parse %v = %v, %v", args, continued, err)
+		}
+	}
+	if _, err := parseStartupArgs([]string{"unexpected"}); err == nil {
+		t.Fatal("expected positional argument error")
+	}
+}
+
+func TestRunPersistentSessionsSwitchesAndHydratesTarget(t *testing.T) {
+	root := t.TempDir()
+	workspace := t.TempDir()
+	store, err := tracing.NewFileStore(filepath.Join(root, "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Create(context.Background(), workspace, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Create(context.Background(), workspace, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSession := session.Session{Conversation: []llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "old question"},
+		{Role: llm.RoleAssistant, Content: "old answer"},
+	}}
+	ctx := tracing.Init(context.Background(), tracing.SessionRecorder(store, second.ID))
+	ctx, run, err := tracing.BeginRun(ctx, tracing.RunMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Snapshot(tracing.SessionState{Conversation: secondSession.Conversation})
+	if err := run.Checkpoint(); err != nil {
+		t.Fatal(err)
+	}
+	var runErr error
+	run.End(&runErr, nil)
+
+	commands := command.DefaultRegistry()
+	commands.Register(command.NewSwitchCmd(workspaceSessionResolver{store: store, workspace: workspace}))
+	frontend := &sessionTestFrontend{submissions: []input.Submission{{Text: "/switch second.ID"}, {Text: "/exit"}}}
+	// Replace the literal selector with the target ID while preserving one scripted stream.
+	frontend.submissions[0].Text = "/switch " + second.ID
+	cfg := config.Config{Logging: logging.Config{Output: logging.OutputStderr}}
+	if err := runPersistentSessions(context.Background(), cfg, store, workspace, first, session.Session{}, &sessionTestProvider{}, frontend, frontend, runtime.Options{Commands: commands}); err != nil {
+		t.Fatal(err)
+	}
+	loaded := false
+	for _, event := range frontend.events {
+		if event.Kind == input.EventSessionLoaded && event.SessionID == second.ID && len(event.Messages) == 2 {
+			loaded = true
+		}
+	}
+	if !loaded {
+		t.Fatalf("target session was not hydrated: %#v", frontend.events)
+	}
+	active, _, err := store.Continue(context.Background(), workspace)
+	if err != nil || active.ID != second.ID {
+		t.Fatalf("active session=%#v err=%v", active, err)
 	}
 }
 

@@ -78,6 +78,53 @@ func TestRunRecordsTraceLifecycle(t *testing.T) {
 	}
 }
 
+func TestRunUsesRestoredSessionWithoutAddingSystemPrompt(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "continue"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "done"}}}}
+	restored := session.Session{Conversation: []llm.Message{
+		{Role: llm.RoleSystem, Content: "original system"},
+		{Role: llm.RoleUser, Content: "earlier"},
+		{Role: llm.RoleAssistant, Content: "earlier answer"},
+	}}
+
+	runtime := New(aiProvider, userInput, userInput, Options{InitialSession: &restored})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	messages := aiProvider.queries[0].Messages
+	if len(messages) != 4 || messages[0].Content != "original system" || messages[3].Content != "continue" {
+		t.Fatalf("restored messages = %#v", messages)
+	}
+	if len(restored.Conversation) != 3 {
+		t.Fatalf("runtime mutated supplied session: %#v", restored.Conversation)
+	}
+}
+
+func TestRunSessionReturnsResolvedSwitchAction(t *testing.T) {
+	userInput := &scriptedInput{receives: []receiveResult{{text: "/switch parser work"}}}
+	aiProvider := &fakeProvider{}
+	commands := command.DefaultRegistry()
+	commands.Register(command.NewSwitchCmd(&runtimeSwitchResolver{sessionID: "target-session"}))
+	runtime := New(aiProvider, userInput, userInput, Options{Commands: commands})
+
+	action, err := runtime.RunSession(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if action != command.ActionSwitchSession || runtime.SwitchSessionID() != "target-session" {
+		t.Fatalf("action=%v target=%q", action, runtime.SwitchSessionID())
+	}
+}
+
+type runtimeSwitchResolver struct{ sessionID string }
+
+func (r *runtimeSwitchResolver) ResolveSession(context.Context, string) (command.SessionSummary, error) {
+	return command.SessionSummary{ID: r.sessionID}, nil
+}
+func (r *runtimeSwitchResolver) ListSessions(context.Context) ([]command.SessionSummary, error) {
+	return nil, nil
+}
+
 func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 	userInput := &scriptedInput{receives: []receiveResult{{text: "  hello  "}, {text: "/exit"}}}
 	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: "assistant", Content: "world"}}}}
