@@ -330,11 +330,11 @@ func (m *model) renderInput(width int) []string {
 func modeBadge(mode input.Mode) (string, string) {
 	switch mode {
 	case input.ModePlan:
-		return "[Plan]", ansiMagenta
+		return "[Plan]", ansiYellow
 	case input.ModeChat:
 		return "[Chat]", ansiCyan
 	default:
-		return "[Build]", ansiGreen
+		return "[Build]", ansiMagenta
 	}
 }
 
