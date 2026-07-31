@@ -39,6 +39,7 @@ type ToolDefinition struct {
 type Schema struct {
 	Type                 string            `json:"type"`
 	Description          string            `json:"description,omitempty"`
+	Enum                 []string          `json:"enum,omitempty"`
 	Properties           map[string]Schema `json:"properties,omitempty"`
 	Required             []string          `json:"required,omitempty"`
 	AdditionalProperties *bool             `json:"additionalProperties,omitempty"`

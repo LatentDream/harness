@@ -1,0 +1,16 @@
+Fetches content from a specified URL.
+
+Use this tool when you need to retrieve and analyze web content. The URL must start with http:// or https://.
+
+Parameters:
+- url: The fully-formed URL to fetch.
+- format: Optional output format. Use markdown, text, or html. Defaults to markdown.
+- timeoutSeconds: Optional maximum request duration in seconds. Defaults to 30 and is capped at 120.
+
+Behavior:
+- HTML responses are converted to Markdown when format is markdown.
+- HTML responses are converted to visible text when format is text.
+- HTML responses are returned unchanged when format is html.
+- Non-HTML text responses are returned as decoded text.
+- Binary image responses are not supported yet, except SVG is treated as text.
+- Responses larger than 5 MiB are rejected.

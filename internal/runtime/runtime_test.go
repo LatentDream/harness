@@ -212,7 +212,7 @@ func TestRunPlanModeUsesReadOnlyToolsAndEphemeralInstruction(t *testing.T) {
 		t.Fatalf("expected two plan requests, got %d", len(aiProvider.queries))
 	}
 	for _, query := range aiProvider.queries {
-		if got := toolNames(query.Tools); !reflect.DeepEqual(got, []string{"read", "glob", "grep"}) {
+		if got := toolNames(query.Tools); !reflect.DeepEqual(got, []string{"read", "glob", "grep", "webfetch"}) {
 			t.Fatalf("expected only read-only plan tools, got %#v", got)
 		}
 		first := query.Messages[0]
@@ -449,7 +449,7 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "glob", "grep", "bash"}) {
+	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "glob", "grep", "webfetch", "bash"}) {
 		t.Fatalf("expected default tool definitions, got %#v", aiProvider.queries[0].Tools)
 	}
 
