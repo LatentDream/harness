@@ -111,3 +111,12 @@ func TestKeyDecoderIgnoresNonWheelMouseEvents(t *testing.T) {
 		t.Fatalf("non-wheel mouse sequence emitted keys: %#v", got)
 	}
 }
+
+func TestKeyDecoderUsesF2ToToggleMarkdown(t *testing.T) {
+	var decoder keyDecoder
+	got := decoder.feed([]byte("\x1bOQ\x1b[12~"))
+	want := []key{{kind: keyToggleMarkdown}, {kind: keyToggleMarkdown}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("keys = %#v, want %#v", got, want)
+	}
+}

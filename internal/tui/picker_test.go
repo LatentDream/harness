@@ -13,7 +13,7 @@ import (
 
 func TestCommandCandidatesUseRequestedPrefix(t *testing.T) {
 	got := commandCandidates(command.DefaultRegistry(), ":")
-	want := []string{":q\texit harness", ":help\tshow available commands", ":new\tstart a new session"}
+	want := []string{":markdown\ttoggle rendered/raw Markdown", ":q\texit harness", ":help\tshow available commands", ":new\tstart a new session"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}

@@ -67,6 +67,11 @@ type transcriptBlock struct {
 	interrupted bool
 	activity    input.ToolActivity
 	completed   bool
+
+	markdownText   string
+	markdownWidth  int
+	markdownColors bool
+	markdownLines  []string
 }
 
 type streamKey struct {
@@ -109,6 +114,7 @@ type model struct {
 	notice              string
 	spinner             int
 	scrollOffset        int
+	markdownDisabled    bool
 	colors              palette
 	editor              editor
 	blocks              []transcriptBlock
@@ -376,6 +382,7 @@ var inputTips = []string{
 	"Tip: / opens the command palette",
 	"Tip: Tab switches [Build], [Plan], and [Chat]",
 	"Tip: Ctrl+N inserts a newline",
+	"Tip: F2 toggles rendered and raw Markdown",
 	"Tip: Esc cancels current work",
 	"Tip: PgUp/PgDn, Ctrl+U/D, or the mouse wheel scroll the transcript",
 }
@@ -540,6 +547,9 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 	switch pressed.kind {
 	case keyCtrlC:
 		return true, nil
+	case keyToggleMarkdown:
+		state.toggleMarkdown()
+		return false, nil
 	case keyEscape:
 		if state.isLocalShellRunning {
 			if u.localShellCancel != nil {
@@ -605,6 +615,11 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 			state.editor.remember("!" + strings.TrimSpace(text))
 			return false, u.startLocalShell(ctx, state, text)
 		}
+		if handled := state.handleLocalCommand(strings.TrimSpace(text)); handled {
+			state.editor.remember(text)
+			state.editor.reset()
+			return false, nil
+		}
 		state.editor.remember(text)
 		state.blocks = append(state.blocks, transcriptBlock{kind: blockUser, text: text, mode: state.mode})
 		state.scrollOffset = 0
@@ -654,6 +669,46 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		state.editor.insert(pressed.text)
 	}
 	return false, nil
+}
+
+func (m *model) toggleMarkdown() {
+	m.markdownDisabled = !m.markdownDisabled
+	m.scrollOffset = 0
+	if m.markdownDisabled {
+		m.notice = "Markdown rendering off (showing raw responses)"
+	} else {
+		m.notice = "Markdown rendering on"
+	}
+}
+
+func (m *model) handleLocalCommand(commandText string) bool {
+	fields := strings.Fields(strings.ToLower(commandText))
+	if len(fields) == 0 || (fields[0] != "/markdown" && fields[0] != ":markdown") {
+		return false
+	}
+	if len(fields) > 2 {
+		m.notice = "usage: /markdown [toggle|on|off|raw|rendered]"
+		return true
+	}
+	argument := "toggle"
+	if len(fields) == 2 {
+		argument = fields[1]
+	}
+	switch argument {
+	case "toggle":
+		m.toggleMarkdown()
+	case "on", "rendered":
+		m.markdownDisabled = false
+		m.scrollOffset = 0
+		m.notice = "Markdown rendering on"
+	case "off", "raw":
+		m.markdownDisabled = true
+		m.scrollOffset = 0
+		m.notice = "Markdown rendering off (showing raw responses)"
+	default:
+		m.notice = "usage: /markdown [toggle|on|off|raw|rendered]"
+	}
+	return true
 }
 
 func (u *UI) pickFile(ctx context.Context, state *model, query string) error {

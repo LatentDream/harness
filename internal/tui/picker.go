@@ -57,7 +57,10 @@ func fileCandidates(ctx context.Context, root string) ([]string, error) {
 
 func commandCandidates(registry *command.Registry, prefix string) []string {
 	entries := registry.Entries()
-	result := make([]string, 0, len(entries))
+	result := make([]string, 0, len(entries)+1)
+	if prefix == "/" || prefix == ":" {
+		result = append(result, prefix+"markdown\ttoggle rendered/raw Markdown")
+	}
 	for _, entry := range entries {
 		mapping := ""
 		for _, candidate := range entry.Mappings {

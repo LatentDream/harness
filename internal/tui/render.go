@@ -96,22 +96,29 @@ func (m *model) renderHeader(width int) []string {
 func (m *model) renderTranscript(width, height int) []string {
 	all := make([]string, 0)
 	contentWidth := max(1, width-4)
-	for index, block := range m.blocks {
+	for index := range m.blocks {
+		block := &m.blocks[index]
 		if isToolBlock(block.kind) {
-			all = append(all, m.renderToolBlock(block, width)...)
+			all = append(all, m.renderToolBlock(*block, width)...)
 			if index == len(m.blocks)-1 || !isToolBlock(m.blocks[index+1].kind) {
 				all = append(all, "")
 			}
 			continue
 		}
-		label, color := m.blockLabel(block)
+		label, color := m.blockLabel(*block)
 		all = append(all, m.colors.wrap(ansiBold+color, label))
-		wrapped := wrapText(sanitize(block.text), contentWidth)
-		if len(wrapped) == 0 {
-			wrapped = []string{""}
-		}
-		for _, line := range wrapped {
-			all = append(all, "  "+m.colors.wrap(color, line))
+		if block.kind == blockAssistant && !m.markdownDisabled {
+			for _, line := range m.renderAssistantMarkdown(block, contentWidth) {
+				all = append(all, "  "+line)
+			}
+		} else {
+			wrapped := wrapText(sanitize(block.text), contentWidth)
+			if len(wrapped) == 0 {
+				wrapped = []string{""}
+			}
+			for _, line := range wrapped {
+				all = append(all, "  "+m.colors.wrap(color, line))
+			}
 		}
 		if block.interrupted {
 			all = append(all, "  "+m.colors.wrap(ansiYellow+ansiDim, "response interrupted"))
@@ -131,12 +138,22 @@ func (m *model) renderTranscript(width, height int) []string {
 	return view
 }
 
+func (m *model) renderAssistantMarkdown(block *transcriptBlock, width int) []string {
+	if block.markdownText != block.text || block.markdownWidth != width || block.markdownColors != m.colors.enabled {
+		block.markdownText = block.text
+		block.markdownWidth = width
+		block.markdownColors = m.colors.enabled
+		block.markdownLines = renderMarkdown(block.text, width, m.colors)
+	}
+	return block.markdownLines
+}
+
 func (m *model) renderWelcome(width int) []string {
 	contentWidth := max(1, width-2)
 	lines := []string{"", m.colors.wrap(ansiBold+ansiCyan, "╭─ Ready when you are")}
 	sections := []string{
 		"Start with a question, @ to find a file, or / for commands.",
-		"enter send  ·  ctrl+n newline  ·  tab build/plan/chat",
+		"enter send  ·  ctrl+n newline  ·  tab build/plan/chat  ·  f2 raw/md",
 		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 	}
 	for index, section := range sections {

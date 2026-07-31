@@ -27,6 +27,7 @@ const (
 	keyScrollUp
 	keyScrollDown
 	keyCtrlC
+	keyToggleMarkdown
 	keyCtrlW
 	keyWordLeft
 	keyWordRight
@@ -50,6 +51,8 @@ var keySequences = []struct {
 	kind     keyKind
 }{
 	{[]byte("\x1b[3~"), keyDelete},
+	{[]byte("\x1bOQ"), keyToggleMarkdown},
+	{[]byte("\x1b[12~"), keyToggleMarkdown},
 	{[]byte("\x1b[5~"), keyPageUp},
 	{[]byte("\x1b[6~"), keyPageDown},
 	{[]byte("\x1b[H"), keyHome},
