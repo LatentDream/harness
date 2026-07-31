@@ -54,6 +54,7 @@ const (
 	blockToolRead
 	blockToolWrite
 	blockToolBash
+	blockToolWebfetch
 	blockShell
 )
 
@@ -527,6 +528,8 @@ func displayedToolKind(name string) (blockKind, bool) {
 		return blockToolWrite, true
 	case "bash":
 		return blockToolBash, true
+	case "webfetch":
+		return blockToolWebfetch, true
 	default:
 		return 0, false
 	}

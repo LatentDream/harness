@@ -211,7 +211,7 @@ func (m *model) renderStatus(width int) string {
 }
 
 func isToolBlock(kind blockKind) bool {
-	return kind == blockToolRead || kind == blockToolWrite || kind == blockToolBash
+	return kind == blockToolRead || kind == blockToolWrite || kind == blockToolBash || kind == blockToolWebfetch
 }
 
 func (m *model) renderToolBlock(block transcriptBlock, width int) []string {
@@ -230,9 +230,26 @@ func (m *model) renderToolBlock(block transcriptBlock, width int) []string {
 		return m.renderFileActivity(label, block, width)
 	case blockToolBash:
 		return m.renderBashActivity(block, width)
+	case blockToolWebfetch:
+		label := "Fetching"
+		if block.completed {
+			label = "Fetched"
+		}
+		return m.renderWebfetchActivity(label, block, width)
 	default:
 		return nil
 	}
+}
+
+func (m *model) renderWebfetchActivity(label string, block transcriptBlock, width int) []string {
+	target := sanitizeInline(block.activity.Target)
+	line := "› " + label + " " + target
+	color := ansiGray
+	if block.activity.Error != "" {
+		color = ansiRed
+		line += " (failed: " + sanitizeInline(block.activity.Error) + ")"
+	}
+	return []string{truncateDisplay(m.colors.wrap(ansiDim+color, line), width)}
 }
 
 func (m *model) renderFileActivity(label string, block transcriptBlock, width int) []string {

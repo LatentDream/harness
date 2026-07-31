@@ -89,6 +89,7 @@ func TestModelRendersDedicatedToolActivities(t *testing.T) {
 	}
 	readPath := filepath.Join(workspace, "internal", "read.go")
 	writePath := filepath.Join(workspace, "internal", "write.go")
+	webURL := "https://example.com/docs?topic=webfetch"
 
 	state.apply(input.Event{
 		Kind: input.EventToolStarted, TurnID: "turn", ToolCallID: "read-1", ToolName: "read",
@@ -114,6 +115,14 @@ func TestModelRendersDedicatedToolActivities(t *testing.T) {
 		Kind: input.EventToolCompleted, TurnID: "turn", ToolCallID: "bash-1", ToolName: "bash",
 		ToolActivity: input.ToolActivity{Command: "go test ./...", Output: "ok package"},
 	})
+	state.apply(input.Event{
+		Kind: input.EventToolStarted, TurnID: "turn", ToolCallID: "webfetch-1", ToolName: "webfetch",
+		ToolActivity: input.ToolActivity{Target: webURL},
+	})
+	state.apply(input.Event{
+		Kind: input.EventToolCompleted, TurnID: "turn", ToolCallID: "webfetch-1", ToolName: "webfetch",
+		ToolActivity: input.ToolActivity{Target: webURL},
+	})
 	state.apply(input.Event{Kind: input.EventAssistantStarted, TurnID: "turn", Round: 1})
 	state.apply(input.Event{Kind: input.EventAssistantDelta, TurnID: "turn", Round: 1, Text: "done"})
 	state.apply(input.Event{Kind: input.EventAssistantCompleted, TurnID: "turn", Round: 1, Text: "done"})
@@ -124,7 +133,8 @@ func TestModelRendersDedicatedToolActivities(t *testing.T) {
 		"› Wrote internal/write.go",
 		"› Bash $ go test ./...",
 		"  ok package",
-		"  ok package\n\nASSISTANT",
+		"› Fetched https://example.com/docs?topic=webfetch",
+		"› Fetched https://example.com/docs?topic=webfetch\n\nASSISTANT",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("tool transcript does not contain %q: %q", expected, view)
