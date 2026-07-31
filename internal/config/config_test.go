@@ -40,8 +40,14 @@ func TestLoadUsesEmbeddedDefault(t *testing.T) {
 	if config.Providers[0].Name != "codex" {
 		t.Fatalf("expected default provider codex, got %q", config.Providers[0].Name)
 	}
-	if len(config.Providers[0].Models) != 1 || config.Providers[0].Models[0].Name != "gpt-5.5" {
-		t.Fatalf("expected default codex model gpt-5.5, got %#v", config.Providers[0].Models)
+	expectedModels := []string{"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-luna"}
+	if len(config.Providers[0].Models) != len(expectedModels) {
+		t.Fatalf("expected default codex models %v, got %#v", expectedModels, config.Providers[0].Models)
+	}
+	for i, expectedModel := range expectedModels {
+		if config.Providers[0].Models[i].Name != expectedModel {
+			t.Fatalf("expected default codex model %q at index %d, got %#v", expectedModel, i, config.Providers[0].Models)
+		}
 	}
 }
 
