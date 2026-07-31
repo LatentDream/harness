@@ -24,6 +24,8 @@ const (
 	keyEnd
 	keyPageUp
 	keyPageDown
+	keyScrollUp
+	keyScrollDown
 	keyCtrlC
 	keyCtrlW
 	keyWordLeft
@@ -90,6 +92,20 @@ func (d *keyDecoder) feed(data []byte) []key {
 			d.pasting = true
 			continue
 		}
+		if parsed, consumed, incomplete := parseSGRMouse(d.buffer); incomplete {
+			if d.pending.IsZero() {
+				d.pending = time.Now()
+			}
+			break
+		} else if consumed > 0 {
+			if parsed != nil {
+				keys = append(keys, *parsed)
+			}
+			d.buffer = d.buffer[consumed:]
+			d.pending = time.Time{}
+			continue
+		}
+
 		matched := false
 		for _, candidate := range keySequences {
 			if bytes.HasPrefix(d.buffer, candidate.sequence) {
@@ -175,6 +191,57 @@ func (d *keyDecoder) flushPending(now time.Time) []key {
 	}
 	d.buffer = d.buffer[1:]
 	return append([]key{{kind: keyEscape}}, d.feed(nil)...)
+}
+
+func parseSGRMouse(buffer []byte) (*key, int, bool) {
+	prefix := []byte("\x1b[<")
+	if len(buffer) < len(prefix) {
+		return nil, 0, bytes.HasPrefix(prefix, buffer)
+	}
+	if !bytes.HasPrefix(buffer, prefix) {
+		return nil, 0, false
+	}
+
+	end := -1
+	for index := len(prefix); index < len(buffer); index++ {
+		if buffer[index] == 'M' || buffer[index] == 'm' {
+			end = index
+			break
+		}
+	}
+	if end < 0 {
+		return nil, 0, true
+	}
+	consumed := end + 1
+	if buffer[end] != 'M' {
+		return nil, consumed, false
+	}
+
+	fields := bytes.Split(buffer[len(prefix):end], []byte(";"))
+	if len(fields) != 3 {
+		return nil, consumed, false
+	}
+	button := 0
+	if len(fields[0]) == 0 {
+		return nil, consumed, false
+	}
+	for _, digit := range fields[0] {
+		if digit < '0' || digit > '9' {
+			return nil, consumed, false
+		}
+		button = button*10 + int(digit-'0')
+	}
+	if button&64 == 0 {
+		return nil, consumed, false
+	}
+	switch button & 3 {
+	case 0:
+		return &key{kind: keyScrollUp}, consumed, false
+	case 1:
+		return &key{kind: keyScrollDown}, consumed, false
+	default:
+		return nil, consumed, false
+	}
 }
 
 func incompleteKeySequence(buffer []byte) bool {

@@ -180,7 +180,7 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 		"╭─ Ready when you are",
 		"Start with a question, @ to find a file, or / for commands.",
 		"enter send  ·  ctrl+n newline  ·  tab mode",
-		"@ files  ·  / commands  ·  pgup scroll  ·  ctrl+c quit",
+		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 		"╰─",
 	} {
 		if !strings.Contains(rendered, expected) {
@@ -389,5 +389,29 @@ func TestSanitizeEditorMapsCursorAcrossTabsAndControls(t *testing.T) {
 	}
 	if cursor != 6 {
 		t.Fatalf("mapped cursor = %d, want 6", cursor)
+	}
+}
+
+func TestMouseWheelScrollsTranscript(t *testing.T) {
+	state := model{height: 12}
+	ui := UI{}
+
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyScrollUp}); err != nil {
+		t.Fatal(err)
+	}
+	if state.scrollOffset != 3 {
+		t.Fatalf("scroll offset after wheel up = %d, want 3", state.scrollOffset)
+	}
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyScrollDown}); err != nil {
+		t.Fatal(err)
+	}
+	if state.scrollOffset != 0 {
+		t.Fatalf("scroll offset after wheel down = %d, want 0", state.scrollOffset)
+	}
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyScrollDown}); err != nil {
+		t.Fatal(err)
+	}
+	if state.scrollOffset != 0 {
+		t.Fatalf("scroll offset after extra wheel down = %d, want 0", state.scrollOffset)
 	}
 }

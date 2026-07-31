@@ -347,7 +347,7 @@ var inputTips = []string{
 	"Tip: Tab switches [Build] and [Plan]",
 	"Tip: Ctrl+N inserts a newline",
 	"Tip: Esc cancels current work",
-	"Tip: PgUp and PgDn scroll the transcript",
+	"Tip: PgUp/PgDn, Ctrl+U/D, or the mouse wheel scroll the transcript",
 }
 
 func randomTip() string {
@@ -528,6 +528,12 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		return false, nil
 	case keyPageDown:
 		state.scrollOffset = max(0, state.scrollOffset-max(1, state.height/2))
+		return false, nil
+	case keyScrollUp:
+		state.scrollOffset += 3
+		return false, nil
+	case keyScrollDown:
+		state.scrollOffset = max(0, state.scrollOffset-3)
 		return false, nil
 	case keyTab:
 		if state.mode == input.ModeBuild {

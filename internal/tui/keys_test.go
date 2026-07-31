@@ -85,3 +85,29 @@ func TestKeyDecoderHandlesTerminalFocusReporting(t *testing.T) {
 		t.Fatalf("keys = %#v, want %#v", got, want)
 	}
 }
+
+func TestKeyDecoderHandlesMouseWheelScroll(t *testing.T) {
+	var decoder keyDecoder
+	got := decoder.feed([]byte("\x1b[<64;10;5M\x1b[<65;10;5M"))
+	want := []key{{kind: keyScrollUp}, {kind: keyScrollDown}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("keys = %#v, want %#v", got, want)
+	}
+}
+
+func TestKeyDecoderRetainsSplitMouseSequence(t *testing.T) {
+	var decoder keyDecoder
+	if got := decoder.feed([]byte("\x1b[<64;")); len(got) != 0 {
+		t.Fatalf("mouse prefix emitted early: %#v", got)
+	}
+	if got := decoder.feed([]byte("10;5M")); !reflect.DeepEqual(got, []key{{kind: keyScrollUp}}) {
+		t.Fatalf("split mouse sequence = %#v", got)
+	}
+}
+
+func TestKeyDecoderIgnoresNonWheelMouseEvents(t *testing.T) {
+	var decoder keyDecoder
+	if got := decoder.feed([]byte("\x1b[<0;10;5M")); len(got) != 0 {
+		t.Fatalf("non-wheel mouse sequence emitted keys: %#v", got)
+	}
+}

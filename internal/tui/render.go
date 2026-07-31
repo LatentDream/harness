@@ -137,7 +137,7 @@ func (m *model) renderWelcome(width int) []string {
 	sections := []string{
 		"Start with a question, @ to find a file, or / for commands.",
 		"enter send  ·  ctrl+n newline  ·  tab mode",
-		"@ files  ·  / commands  ·  pgup scroll  ·  ctrl+c quit",
+		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 	}
 	for index, section := range sections {
 		if index == 1 {

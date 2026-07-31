@@ -19,11 +19,13 @@ FIND A BETTER NAME FOR THIS PROJECT
 - [ ] Auth (as now I need to auth using opencode lol)
 - [ ] First touch: proper way to add auth, and generate the config in ~/.harness/config.json
 - [ ] New tool: webfetch
+- [ ] Better skills system
+- [ ] `:context` command to show the current context and what's loaded
 
 **UI:**
 - [x] bind ctrol u / d to scroll up / down 1/2 a page
 - [x] TUI: escape to cancel the last msg
-- [ ] TUI: a `!` to run a command and be able to happen in to the next message (the truncated output)
+- [x] TUI: a `!` mode to run a command and be able to happen in to the next message (the truncated output if too long)
 - [ ] TUI: Bind the scroll up / down keys to scroll the page up / down
 - [ ] TUI: markdown rendering
 - [ ] TUI: session selector
