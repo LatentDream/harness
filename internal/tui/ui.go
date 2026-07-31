@@ -39,6 +39,9 @@ type UI struct {
 	events      chan input.Event
 	ready       chan struct{}
 	interrupts  chan struct{}
+
+	localShellResults chan localShellRunResult
+	localShellCancel  context.CancelFunc
 }
 
 type blockKind int
@@ -51,6 +54,7 @@ const (
 	blockToolRead
 	blockToolWrite
 	blockToolBash
+	blockShell
 )
 
 type transcriptBlock struct {
@@ -74,27 +78,41 @@ type toolKey struct {
 	callID string
 }
 
+type promptMode int
+
+const (
+	promptNormal promptMode = iota
+	promptShell
+)
+
+type localShellRunResult struct {
+	result localShellResult
+	err    error
+}
+
 type model struct {
-	width              int
-	height             int
-	provider           string
-	modelName          string
-	workingDirectory   string
-	username           string
-	tip                string
-	mode               input.Mode
-	focused            bool
-	ready              bool
-	isInferenceRunning bool
-	status             string
-	notice             string
-	spinner            int
-	scrollOffset       int
-	colors             palette
-	editor             editor
-	blocks             []transcriptBlock
-	streams            map[streamKey]int
-	tools              map[toolKey]int
+	width               int
+	height              int
+	provider            string
+	modelName           string
+	workingDirectory    string
+	username            string
+	tip                 string
+	mode                input.Mode
+	promptMode          promptMode
+	focused             bool
+	ready               bool
+	isInferenceRunning  bool
+	isLocalShellRunning bool
+	status              string
+	notice              string
+	spinner             int
+	scrollOffset        int
+	colors              palette
+	editor              editor
+	blocks              []transcriptBlock
+	streams             map[streamKey]int
+	tools               map[toolKey]int
 }
 
 type readResult struct {
@@ -119,15 +137,16 @@ func New(in, out, errOut *os.File, options Options) (*UI, error) {
 	}
 	terminal := newNativeTerminal(in, out)
 	ui := &UI{
-		in:          in,
-		out:         out,
-		err:         errOut,
-		terminal:    terminal,
-		options:     options,
-		submissions: make(chan input.Submission, 1),
-		events:      make(chan input.Event, 128),
-		ready:       make(chan struct{}, 1),
-		interrupts:  make(chan struct{}, 1),
+		in:                in,
+		out:               out,
+		err:               errOut,
+		terminal:          terminal,
+		options:           options,
+		submissions:       make(chan input.Submission, 1),
+		events:            make(chan input.Event, 128),
+		ready:             make(chan struct{}, 1),
+		interrupts:        make(chan struct{}, 1),
+		localShellResults: make(chan localShellRunResult, 1),
 	}
 	if terminal.IsInteractive() {
 		fzf, findErr := findFZF()
@@ -251,10 +270,20 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 			}
 			return err
 		case <-u.ready:
-			state.ready = true
+			if !state.isLocalShellRunning {
+				state.ready = true
+			}
 			state.isInferenceRunning = false
-			state.status = ""
+			if !state.isLocalShellRunning {
+				state.status = ""
+			}
 			state.tip = randomTip()
+			if err := u.draw(&state); err != nil {
+				return err
+			}
+		case result := <-u.localShellResults:
+			state.applyLocalShellResult(result)
+			u.localShellCancel = nil
 			if err := u.draw(&state); err != nil {
 				return err
 			}
@@ -480,6 +509,8 @@ func (m *model) apply(event input.Event) {
 		m.streams = make(map[streamKey]int)
 		m.tools = make(map[toolKey]int)
 		m.isInferenceRunning = false
+		m.isLocalShellRunning = false
+		m.promptMode = promptNormal
 		m.status = ""
 		m.notice = ""
 		m.scrollOffset = 0
@@ -507,8 +538,16 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 	case keyCtrlC:
 		return true, nil
 	case keyEscape:
+		if state.isLocalShellRunning {
+			if u.localShellCancel != nil {
+				u.localShellCancel()
+			}
+			state.notice = "cancelling command..."
+			return false, nil
+		}
 		if state.ready {
 			state.editor.reset()
+			state.promptMode = promptNormal
 			return false, nil
 		}
 		select {
@@ -536,6 +575,10 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		state.scrollOffset = max(0, state.scrollOffset-3)
 		return false, nil
 	case keyTab:
+		if state.promptMode == promptShell {
+			state.editor.insert("\t")
+			return false, nil
+		}
 		if state.mode == input.ModeBuild {
 			state.mode = input.ModePlan
 		} else {
@@ -551,6 +594,10 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		text := state.editor.value()
 		if strings.TrimSpace(text) == "" {
 			return false, nil
+		}
+		if state.promptMode == promptShell {
+			state.editor.remember("!" + strings.TrimSpace(text))
+			return false, u.startLocalShell(ctx, state, text)
 		}
 		state.editor.remember(text)
 		state.blocks = append(state.blocks, transcriptBlock{kind: blockUser, text: text, mode: state.mode})
@@ -584,6 +631,14 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 	case keyEnd:
 		state.editor.end()
 	case keyText:
+		if pressed.text == "!" && state.promptMode == promptNormal && state.editor.empty() {
+			state.promptMode = promptShell
+			return false, nil
+		}
+		if state.promptMode == promptShell {
+			state.editor.insert(pressed.text)
+			return false, nil
+		}
 		if pressed.text == "@" {
 			return false, u.pickFile(ctx, state, "")
 		}
@@ -651,4 +706,43 @@ func (u *UI) runPicker(ctx context.Context, candidates []string, prompt string, 
 	}
 	defer func() { runErr = errors.Join(runErr, u.terminal.Resume()) }()
 	return runFZF(ctx, u.fzf, candidates, prompt, query, zeroDelimited, u.err)
+}
+
+func (u *UI) startLocalShell(ctx context.Context, state *model, command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("command must not be empty")
+	}
+	if u.localShellResults == nil {
+		u.localShellResults = make(chan localShellRunResult, 1)
+	}
+	commandCtx, cancel := context.WithCancel(ctx)
+	u.localShellCancel = cancel
+	state.ready = false
+	state.isLocalShellRunning = true
+	state.status = "running command: " + command
+	state.editor.reset()
+	go func() {
+		result, err := runLocalShellCommand(commandCtx, command, state.workingDirectory)
+		select {
+		case u.localShellResults <- localShellRunResult{result: result, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+	return nil
+}
+
+func (m *model) applyLocalShellResult(run localShellRunResult) {
+	m.ready = true
+	m.isLocalShellRunning = false
+	m.status = ""
+	m.promptMode = promptNormal
+	m.scrollOffset = 0
+	if run.err != nil {
+		m.notice = run.err.Error()
+		return
+	}
+	blockText := formatLocalShellForBlock(run.result)
+	m.blocks = append(m.blocks, transcriptBlock{kind: blockShell, text: blockText})
+	m.editor.set(formatLocalShellForMessage(run.result))
 }

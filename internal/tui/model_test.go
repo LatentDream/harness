@@ -415,3 +415,55 @@ func TestMouseWheelScrollsTranscript(t *testing.T) {
 		t.Fatalf("scroll offset after extra wheel down = %d, want 0", state.scrollOffset)
 	}
 }
+
+func TestShellPromptRendersDistinctlyAndPreservesMode(t *testing.T) {
+	state := model{mode: input.ModePlan, promptMode: promptShell, focused: true}
+
+	rendered := stripANSI(strings.Join(state.renderInput(60), "\n"))
+	if !strings.Contains(rendered, "[Shell] $") {
+		t.Fatalf("shell prompt not rendered: %q", rendered)
+	}
+	if state.mode != input.ModePlan {
+		t.Fatalf("shell prompt changed build/plan mode: %q", state.mode)
+	}
+}
+
+func TestBangKeyEntersShellModeOnlyAtEmptyPrompt(t *testing.T) {
+	ui := UI{}
+	state := model{ready: true, mode: input.ModeBuild}
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyText, text: "!"}); err != nil {
+		t.Fatal(err)
+	}
+	if state.promptMode != promptShell || state.editor.value() != "" {
+		t.Fatalf("bang did not enter shell mode: promptMode=%v editor=%q", state.promptMode, state.editor.value())
+	}
+
+	state = model{ready: true, mode: input.ModeBuild}
+	state.editor.insert("echo ")
+	if _, err := ui.handleKey(context.Background(), &state, key{kind: keyText, text: "!"}); err != nil {
+		t.Fatal(err)
+	}
+	if state.promptMode != promptNormal || state.editor.value() != "echo !" {
+		t.Fatalf("bang in non-empty prompt was not inserted: promptMode=%v editor=%q", state.promptMode, state.editor.value())
+	}
+}
+
+func TestLocalShellResultPopulatesNextMessageAndTranscript(t *testing.T) {
+	state := model{ready: false, promptMode: promptShell}
+	state.applyLocalShellResult(localShellRunResult{result: localShellResult{
+		Command:          "go test ./...",
+		WorkingDirectory: "/workspace",
+		ExitCode:         0,
+		Stdout:           "ok\n",
+	}})
+
+	if !state.ready || state.promptMode != promptNormal || state.isLocalShellRunning {
+		t.Fatalf("shell result did not reset prompt state: %#v", state)
+	}
+	if len(state.blocks) != 1 || state.blocks[0].kind != blockShell || !strings.Contains(state.blocks[0].text, "ok") {
+		t.Fatalf("shell result not added to transcript: %#v", state.blocks)
+	}
+	if got := state.editor.value(); !strings.Contains(got, "Command: go test ./...") || !strings.Contains(got, "Stdout:\nok") {
+		t.Fatalf("shell result not inserted into next message: %q", got)
+	}
+}

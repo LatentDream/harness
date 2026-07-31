@@ -183,6 +183,7 @@ Useful keys:
 | `Tab` | Switch Build/Plan mode |
 | `@` | Pick a repository file |
 | `/` or `:` | Open command picker |
+| `!` | Run a local shell command and insert truncated output into the next prompt |
 | `Ctrl+C` | Cancel and exit |
 
 Plan mode exposes only read-only tools. Build mode allows the full configured tool set.

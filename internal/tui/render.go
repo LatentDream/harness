@@ -166,6 +166,8 @@ func (m *model) blockLabel(block transcriptBlock) (string, string) {
 		return "ASSISTANT", ansiCyan
 	case blockError:
 		return "ERROR", ansiRed
+	case blockShell:
+		return "SHELL", ansiYellow
 	default:
 		return "OUTPUT", ansiGray
 	}
@@ -280,9 +282,13 @@ func (m *model) renderInput(width int) []string {
 		accent = ansiMagenta
 		mode = "[Plan]"
 	}
+	prefix := mode + " > "
+	if m.promptMode == promptShell {
+		accent = ansiYellow
+		prefix = "[Shell] $ "
+	}
 	separator := strings.Repeat("─", width)
 	lines := []string{m.colors.wrap(ansiDim+accent, separator)}
-	prefix := mode + " > "
 	contentWidth := max(1, width-displayWidth(prefix)-1)
 	runes, cursor := sanitizeEditor([]rune(m.editor.value()), m.editor.cursor)
 	wrapped := renderEditorLines(runes, cursor, contentWidth, m.focused)

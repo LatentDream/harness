@@ -16,11 +16,12 @@ changing terminal mode and exits with an actionable error when it is missing.
 | `Tab` | Switch between Build and Plan mode |
 | `@` | Open the repository file picker and insert `@relative/path` |
 | `/` or `:` | Open the command picker at the start of an empty prompt |
+| `!` | Enter local shell mode at the start of an empty prompt; `Enter` runs the command and inserts truncated output into the next message |
 | `PageUp` / `PageDown`, `Ctrl+U` / `Ctrl+D` | Scroll the transcript |
 | Arrow keys | Move through the editor |
 | `Alt+B` / `Alt+F` | Move by one word |
 | `Ctrl+W` | Delete the previous word |
-| `Esc` | Clear the editor |
+| `Esc` | Clear the editor, cancel shell mode, or cancel a running local command |
 | `Ctrl+C` | Cancel and exit Harness |
 
 Bracketed paste is enabled, so pasted multiline content is inserted without
@@ -33,6 +34,10 @@ being submitted.
   read-only tools. The selected mode is recorded with each turn in the trace.
 
 Mode instructions are request-local and are not added to conversation history.
+
+## Local shell mode
+
+Type `!` at the start of an empty prompt to switch to `[Shell] $`. The text you enter runs locally in the configured working directory using `/bin/bash -lc`. Harness captures stdout, stderr, exit code, and timeout state, adds a shell block to the transcript, and pre-fills the next normal prompt with the captured output. Long command output is truncated before insertion so it can be sent to the model as context.
 
 ## Commands
 
