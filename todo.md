@@ -21,6 +21,26 @@ FIND A BETTER NAME FOR THIS PROJECT
 - [ ] New tool: webfetch
 - [ ] Better skills system
 - [ ] `:context` command to show the current context and what's loaded
+- [ ] Evals
+  - Let's start simple: Run with prompt and env -> Investiguate tool call, action taken, resolution, ... from the tracing
+  - We could add some mocking of some components after
+- [ ] A way to feed a prompt to the AI from the CLI
+- [ ] A nvim frontend to be able to take what's in the visual selector, with a prompt, the file, and the repo root as root and feed it to the harness with a spinner on the side like hte lsp loading state
+  - [ ] Add TTFT (time to first token) to the startup process (This is the most important metric in my opinion) and the TUI startup lenght
+
+An idea:
+> **Secure Environment**: Completly decouple the runtime from the session log / harness.
+> - File System and bash would be run directly in a container
+>   - Without any way to extract the git creds
+> - Components:
+>   - Harness: code logic which dispatch the action
+>   - Sandbox: container / isolated process with the code and its own FS
+>   - Session: event logs to rebuilt the session / state
+>   - Tools: available tools, some need the FS as DI to work, some are external
+> 
+> so what we have to do is once again, improve our trace to keep a full event logs, so we can respawn the sandbox state (expecially with the tool call)
+> - _Kinda the current way, but not yet_: model context is 100% derivable from the event logs
+
 
 **UI:**
 - [x] bind ctrol u / d to scroll up / down 1/2 a page
@@ -31,6 +51,7 @@ FIND A BETTER NAME FOR THIS PROJECT
 - [ ] TUI: session selector
 - [ ] Better interupt handling
 - [ ] Queue messages from the user
+- [ ] Bind `ctrl+r` to a fuzzy find of the historic of prompt
 
 **Extension:**
 - [ ] Have a way to add mode (to the: plan, build), by having a file in .harness/mode/debug.json
