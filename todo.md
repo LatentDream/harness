@@ -27,6 +27,7 @@ FIND A BETTER NAME FOR THIS PROJECT
 - [ ] A way to feed a prompt to the AI from the CLI
 - [ ] A nvim frontend to be able to take what's in the visual selector, with a prompt, the file, and the repo root as root and feed it to the harness with a spinner on the side like hte lsp loading state
   - [ ] Add TTFT (time to first token) to the startup process (This is the most important metric in my opinion) and the TUI startup lenght
+- [ ] Git Tooling (status, commit, diff, branch)
 
 An idea:
 > **Secure Environment**: Completly decouple the runtime from the session log / harness.
