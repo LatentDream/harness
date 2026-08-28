@@ -629,13 +629,18 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		}
 		return false, nil
 	}
-	if !state.ready {
-		return false, nil
-	}
 	switch pressed.kind {
 	case keyExternalEditor:
+		if !state.ready {
+			state.notice = "still working; send when ready"
+			return false, nil
+		}
 		return false, u.editPromptExternally(ctx, state)
 	case keyEnter:
+		if !state.ready {
+			state.notice = "still working; send when ready"
+			return false, nil
+		}
 		text := state.editor.value()
 		if strings.TrimSpace(text) == "" {
 			return false, nil
@@ -657,30 +662,73 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		u.submissions <- input.Submission{Text: text, Mode: state.mode}
 		state.editor.reset()
 	case keyNewline:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.insert("\n")
 	case keyBackspace:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.backspace()
 	case keyDelete:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.delete()
 	case keyCtrlW:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.deleteWord()
 	case keyLeft:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.moveLeft()
 	case keyRight:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.moveRight()
 	case keyWordLeft:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.moveWord(-1)
 	case keyWordRight:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.moveWord(1)
 	case keyUp:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.vertical(-1)
 	case keyDown:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.vertical(1)
 	case keyHome:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.home()
 	case keyEnd:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
 		state.editor.end()
 	case keyText:
+		if state.isLocalShellRunning {
+			return false, nil
+		}
+		if !state.ready {
+			state.editor.insert(pressed.text)
+			return false, nil
+		}
 		if pressed.text == "!" && state.promptMode == promptNormal && state.editor.empty() {
 			state.promptMode = promptShell
 			return false, nil
