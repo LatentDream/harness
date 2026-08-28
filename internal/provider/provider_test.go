@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -409,5 +410,68 @@ func readDefinitionForTest() llm.ToolDefinition {
 			Required:             []string{"filePath"},
 			AdditionalProperties: &additionalProperties,
 		},
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type closeIdleRoundTripper struct {
+	roundTripFunc
+	closed bool
+}
+
+func (t *closeIdleRoundTripper) CloseIdleConnections() {
+	t.closed = true
+}
+
+func TestDoProviderRequestRetriesCodexTransientErrors(t *testing.T) {
+	attempts := 0
+	transport := &closeIdleRoundTripper{}
+	transport.roundTripFunc = func(request *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("remote error: tls: bad record MAC")
+		}
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if string(body) != `{"ok":true}` {
+			t.Fatalf("unexpected retried body %q", body)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	}
+
+	manager := &manager{client: &http.Client{Transport: transport}}
+	response, err := manager.postJSONResponse(context.Background(), configuredProvider{name: "codex", kind: providerKindCodex, baseURL: "https://example.test"}, "/responses", map[string]bool{"ok": true}, nil)
+	if err != nil {
+		t.Fatalf("expected retry to succeed, got %v", err)
+	}
+	_ = response.Body.Close()
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+	if !transport.closed {
+		t.Fatal("expected idle connections to be closed before retry")
+	}
+}
+
+func TestDoProviderRequestDoesNotRetryOpenAITransientErrors(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return nil, errors.New("remote error: tls: bad record MAC")
+	})}
+	manager := &manager{client: client}
+	_, err := manager.postJSONResponse(context.Background(), configuredProvider{name: "openai", kind: providerKindOpenAICompatible, baseURL: "https://example.test"}, "/chat/completions", map[string]bool{"ok": true}, nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt, got %d", attempts)
 	}
 }

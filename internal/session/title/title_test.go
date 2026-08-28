@@ -51,7 +51,7 @@ func TestGeneratorUsesSeparateToollessRequest(t *testing.T) {
 	if err != nil || got != "Fix Parser Commas" {
 		t.Fatalf("generate = %q, %v", got, err)
 	}
-	if len(fake.request.Messages) != 2 || fake.request.Messages[1].Content != "please fix commas" || len(fake.request.Tools) != 0 || fake.request.MaxTokens != 32 {
+	if len(fake.request.Messages) != 2 || fake.request.Messages[1].Content != "please fix commas" || len(fake.request.Tools) != 0 || fake.request.MaxTokens != 0 {
 		t.Fatalf("request = %#v", fake.request)
 	}
 }

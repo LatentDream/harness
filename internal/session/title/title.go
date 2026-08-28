@@ -64,7 +64,6 @@ func (g *Generator) Generate(ctx context.Context, prompt string) (string, error)
 			{Role: llm.RoleSystem, Content: titlePrompt},
 			{Role: llm.RoleUser, Content: prompt},
 		},
-		MaxTokens: 32,
 	}, nil)
 	if callErr != nil {
 		span.End(callErr, nil)

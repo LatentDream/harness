@@ -3,15 +3,19 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"latentdream/harness/internal/config"
 	"latentdream/harness/internal/session/llm"
@@ -26,6 +30,11 @@ const (
 	defaultCodexModel        = "gpt-5.3-codex"
 	defaultAnthropicVersion  = "2023-06-01"
 	defaultMaxTokens         = 1024
+
+	codexSendAttempts     = 3
+	codexRetryBaseDelay   = 150 * time.Millisecond
+	codexRetryMaxJitter   = 75 * time.Millisecond
+	providerClientTimeout = 10 * time.Minute
 )
 
 var ErrNoEnabledProviders = errors.New("provider: no enabled providers configured")
@@ -56,7 +65,7 @@ type Response struct {
 }
 
 func New(cfg []config.Provider) (Provider, error) {
-	manager := &manager{client: http.DefaultClient}
+	manager := &manager{client: newProviderHTTPClient()}
 	seen := map[string]struct{}{}
 
 	for index, providerCfg := range cfg {
@@ -86,6 +95,19 @@ func New(cfg []config.Provider) (Provider, error) {
 	}
 
 	return manager, nil
+}
+func newProviderHTTPClient() *http.Client {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{Timeout: providerClientTimeout}
+	}
+	clone := transport.Clone()
+	clone.MaxIdleConns = 100
+	clone.MaxIdleConnsPerHost = 10
+	clone.IdleConnTimeout = 90 * time.Second
+	clone.TLSHandshakeTimeout = 15 * time.Second
+	clone.ResponseHeaderTimeout = 2 * time.Minute
+	return &http.Client{Transport: clone, Timeout: providerClientTimeout}
 }
 
 type providerKind string
@@ -784,11 +806,84 @@ func (m *manager) postJSONResponse(ctx context.Context, configured configuredPro
 		req.Header.Set(name, value)
 	}
 
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("send provider %q request: %w", configured.name, err)
+	return m.doProviderRequest(ctx, configured, req)
+}
+
+func (m *manager) doProviderRequest(ctx context.Context, configured configuredProvider, req *http.Request) (*http.Response, error) {
+	attempts := 1
+	if configured.kind == providerKindCodex {
+		attempts = codexSendAttempts
 	}
-	return resp, nil
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 && req.GetBody != nil {
+			body, err := req.GetBody()
+			if err != nil {
+				return nil, fmt.Errorf("recreate provider %q request body: %w", configured.name, err)
+			}
+			req.Body = body
+		}
+
+		resp, err := m.client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if attempt == attempts || !isRetryableProviderError(err) || ctx.Err() != nil {
+			break
+		}
+		m.closeIdleConnections()
+		if err := sleepBeforeRetry(ctx, attempt); err != nil {
+			return nil, fmt.Errorf("send provider %q request: %w", configured.name, err)
+		}
+	}
+
+	return nil, fmt.Errorf("send provider %q request: %w", configured.name, lastErr)
+}
+
+func (m *manager) closeIdleConnections() {
+	if m.client != nil {
+		m.client.CloseIdleConnections()
+	}
+}
+
+func sleepBeforeRetry(ctx context.Context, attempt int) error {
+	delay := codexRetryBaseDelay * time.Duration(1<<(attempt-1))
+	if codexRetryMaxJitter > 0 {
+		delay += time.Duration(rand.Int64N(int64(codexRetryMaxJitter)))
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func isRetryableProviderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var recordHeaderErr tls.RecordHeaderError
+	if errors.As(err, &recordHeaderErr) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "bad record mac") ||
+		strings.Contains(lower, "unexpected eof") ||
+		strings.Contains(lower, "connection reset by peer") ||
+		strings.Contains(lower, "broken pipe") ||
+		lower == "eof" || strings.HasSuffix(lower, ": eof")
 }
 
 func readProviderResponse(configured configuredProvider, resp *http.Response) ([]byte, error) {

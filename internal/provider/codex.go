@@ -153,7 +153,7 @@ func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, 
 	logging.Log(ctx).Debug("received codex response body",
 		zap.String("provider", configured.name),
 		zap.String("model", model),
-		zap.String("body", string(body)),
+		zap.Int("body_bytes", len(body)),
 	)
 
 	if err != nil {
