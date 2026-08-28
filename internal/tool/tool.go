@@ -3,6 +3,7 @@ package tool
 import (
 	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool/bash"
+	"latentdream/harness/internal/tool/edit"
 	"latentdream/harness/internal/tool/glob"
 	"latentdream/harness/internal/tool/grep"
 	"latentdream/harness/internal/tool/model"
@@ -47,7 +48,7 @@ func WithCapability(tools []model.Tool, capability model.Capability) []model.Too
 }
 
 func NewDefault() []model.Tool {
-	return []model.Tool{read.New(), write.New(), glob.New(), grep.New(), webfetch.New(), bash.New()}
+	return []model.Tool{read.New(), write.New(), edit.New(), glob.New(), grep.New(), webfetch.New(), bash.New()}
 }
 
 func NewChatDefault() []model.Tool {

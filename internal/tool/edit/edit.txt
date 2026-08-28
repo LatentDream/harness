@@ -1,0 +1,12 @@
+Edit an existing file by replacing exact text.
+
+Use this tool instead of bash/Python/sed/perl for targeted file edits.
+
+Usage:
+- filePath must be an absolute path to an existing regular file.
+- oldString must match the current file contents exactly and must not be empty.
+- newString is the replacement text and may be empty.
+- expectedReplacements is optional, defaults to 1, and must be a positive integer when provided.
+- The tool fails if the match count is different than expected.
+- Read the relevant file section first so oldString is exact.
+- This tool writes the updated file atomically and preserves the existing file permissions.
