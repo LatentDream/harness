@@ -22,13 +22,14 @@ import (
 )
 
 const (
-	codexClientID         = "app_EMoamEEZ73f0CkXaXp7hrann"
-	codexOAuthTokenURL    = "https://auth.openai.com/oauth/token"
-	codexAuthRefreshSkew  = 30 * time.Second
-	codexResponsesPath    = "/responses"
-	codexHeaderOriginator = "harness"
-	codexHeaderUserAgent  = "harness"
-	codexResponseRole     = "assistant"
+	codexClientID          = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexOAuthTokenURL     = "https://auth.openai.com/oauth/token"
+	codexAuthRefreshSkew   = 30 * time.Second
+	codexStreamIdleTimeout = 2 * time.Minute
+	codexResponsesPath     = "/responses"
+	codexHeaderOriginator  = "harness"
+	codexHeaderUserAgent   = "harness"
+	codexResponseRole      = "assistant"
 )
 
 var codexTokenURL = codexOAuthTokenURL
@@ -134,7 +135,11 @@ func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, 
 	}
 
 	var raw strings.Builder
-	reader := io.TeeReader(resp.Body, &raw)
+	reader := io.Reader(resp.Body)
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		reader = newIdleTimeoutReader(ctx, resp.Body, codexStreamIdleTimeout)
+	}
+	reader = io.TeeReader(reader, &raw)
 	var message llm.Message
 	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
 		message, err = codexStreamResponseMessageReader(reader, stream)
@@ -169,6 +174,41 @@ func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, 
 		Message:  message,
 		Raw:      body,
 	}, nil
+}
+
+type idleTimeoutReader struct {
+	ctx     context.Context
+	reader  io.Reader
+	timeout time.Duration
+}
+
+func newIdleTimeoutReader(ctx context.Context, reader io.Reader, timeout time.Duration) io.Reader {
+	return &idleTimeoutReader{ctx: ctx, reader: reader, timeout: timeout}
+}
+
+func (r *idleTimeoutReader) Read(buffer []byte) (int, error) {
+	readCtx, cancel := context.WithTimeout(r.ctx, r.timeout)
+	defer cancel()
+
+	type readResult struct {
+		n   int
+		err error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		n, err := r.reader.Read(buffer)
+		result <- readResult{n: n, err: err}
+	}()
+
+	select {
+	case result := <-result:
+		return result.n, result.err
+	case <-readCtx.Done():
+		if r.ctx.Err() != nil {
+			return 0, r.ctx.Err()
+		}
+		return 0, fmt.Errorf("codex stream idle for %s: %w", r.timeout, context.DeadlineExceeded)
+	}
 }
 
 func codexRequest(model string, input llm.Request) codexResponsesRequest {

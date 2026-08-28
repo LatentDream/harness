@@ -5,10 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -281,6 +284,49 @@ func TestSendCodexReturnsStreamCallbackError(t *testing.T) {
 	}, func(StreamEvent) error { return callbackErr })
 	if !errors.Is(err, callbackErr) {
 		t.Fatalf("expected callback error, got %v", err)
+	}
+}
+
+func TestCodexStreamIdleTimeout(t *testing.T) {
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+
+	_, err := codexStreamResponseMessageReader(newIdleTimeoutReader(context.Background(), reader, 20*time.Millisecond), nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected stream idle timeout, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "codex stream idle") {
+		t.Fatalf("expected descriptive idle timeout, got %v", err)
+	}
+}
+
+func TestCodexStreamIdleTimeoutResetsAfterProgress(t *testing.T) {
+	reader, writer := io.Pipe()
+	var writerErr error
+	var writerDone sync.WaitGroup
+	writerDone.Add(1)
+	go func() {
+		defer writerDone.Done()
+		defer writer.Close()
+		for _, delta := range []string{"one", " two", " three"} {
+			if _, err := fmt.Fprintf(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\n", delta); err != nil {
+				writerErr = err
+				return
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+	}()
+
+	message, err := codexStreamResponseMessageReader(newIdleTimeoutReader(context.Background(), reader, 40*time.Millisecond), nil)
+	writerDone.Wait()
+	if writerErr != nil {
+		t.Fatalf("write stream: %v", writerErr)
+	}
+	if err != nil {
+		t.Fatalf("expected active stream to complete, got %v", err)
+	}
+	if message.Content != "one two three" {
+		t.Fatalf("unexpected streamed content %q", message.Content)
 	}
 }
 
