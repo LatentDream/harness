@@ -13,6 +13,7 @@ import (
 
 	"latentdream/harness/internal/config"
 	"latentdream/harness/internal/environment/clipboard"
+	"latentdream/harness/internal/herdr"
 	"latentdream/harness/internal/input"
 	"latentdream/harness/internal/logging"
 	"latentdream/harness/internal/provider"
@@ -112,13 +113,17 @@ func run() int {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize terminal UI: %v\n", frontendErr)
 			return 1
 		}
+		reporter := herdr.Wrap(frontend)
+		defer reporter.Close()
 		err = frontend.Run(ctx, func(runCtx context.Context) error {
-			return runPersistentSessions(runCtx, cfg, store, workingDirectory, record, initial, aiProvider, frontend, frontend, runtimeOptions)
+			return runPersistentSessions(runCtx, cfg, store, workingDirectory, record, initial, aiProvider, frontend, reporter, runtimeOptions)
 		})
 	} else {
 		frontend := input.NewTerminal(os.Stdin, os.Stdout, os.Stderr)
+		reporter := herdr.Wrap(frontend)
+		defer reporter.Close()
 		_ = frontend.Writef("Harness (%s/%s)", selection.Provider, selection.Model)
-		err = runPersistentSessions(ctx, cfg, store, workingDirectory, record, initial, aiProvider, frontend, frontend, runtimeOptions)
+		err = runPersistentSessions(ctx, cfg, store, workingDirectory, record, initial, aiProvider, frontend, reporter, runtimeOptions)
 	}
 
 	if err != nil && !errors.Is(err, context.Canceled) {
