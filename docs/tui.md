@@ -12,7 +12,7 @@ changing terminal mode and exits with an actionable error when it is missing.
 | Key | Action |
 | --- | --- |
 | `Enter` | Submit the current prompt |
-| `Ctrl+N` | Insert a newline |
+| `Shift+Enter` | Insert a newline |
 | `Tab` | Switch between Build and Plan mode |
 | `@` | Open the repository file picker and insert `@relative/path` |
 | `/` or `:` | Open the command picker at the start of an empty prompt |

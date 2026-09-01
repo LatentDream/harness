@@ -209,7 +209,7 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 	for _, expected := range []string{
 		"╭─ Ready when you are",
 		"Start with a question, @ to find a file, or / for commands.",
-		"enter send  ·  ctrl+n newline  ·  f4/alt+e editor",
+		"enter send  ·  shift+enter newline  ·  f4/alt+e editor",
 		"tab build/plan/chat  ·  f2 raw/md",
 		"@ files  ·  / commands  ·  pgup/wheel scroll  ·  ctrl+c quit",
 		"╰─",
@@ -221,7 +221,7 @@ func TestWelcomeContainsShortcutsAndDisappearsWithConversation(t *testing.T) {
 
 	state.blocks = []transcriptBlock{{kind: blockUser, mode: input.ModeBuild, text: "hello"}}
 	rendered = stripANSI(state.render())
-	if strings.Contains(rendered, "Ready when you are") || strings.Contains(rendered, "ctrl+n newline") {
+	if strings.Contains(rendered, "Ready when you are") || strings.Contains(rendered, "shift+enter newline") {
 		t.Fatalf("welcome remained after conversation started: %q", rendered)
 	}
 	if !strings.Contains(rendered, inputTips[0]) {

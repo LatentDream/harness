@@ -78,10 +78,51 @@ func TestKeyDecoderTreatsBracketedPasteAsText(t *testing.T) {
 	}
 }
 
-func TestKeyDecoderUsesCtrlNForNewline(t *testing.T) {
+func TestKeyDecoderUsesNewlineShortcuts(t *testing.T) {
+	tests := []struct {
+		name     string
+		sequence string
+	}{
+		{name: "ctrl-n", sequence: "\x0e"},
+		{name: "kitty shift-enter", sequence: "\x1b[13;2u"},
+		{name: "kitty shift-enter with event", sequence: "\x1b[13;2:1u"},
+		{name: "xterm shift-enter", sequence: "\x1b[27;2;13~"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var decoder keyDecoder
+			got := decoder.feed([]byte(test.sequence))
+			want := []key{{kind: keyNewline}}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("keys = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
+func TestKeyDecoderRetainsSplitShiftEnterSequence(t *testing.T) {
 	var decoder keyDecoder
-	got := decoder.feed([]byte{'\n', 0x0e})
-	want := []key{{kind: keyEnter}, {kind: keyNewline}}
+	if got := decoder.feed([]byte("\x1b[13;")); len(got) != 0 {
+		t.Fatalf("shift-enter prefix emitted early: %#v", got)
+	}
+	if got := decoder.feed([]byte("2u")); !reflect.DeepEqual(got, []key{{kind: keyNewline}}) {
+		t.Fatalf("split shift-enter sequence = %#v", got)
+	}
+}
+
+func TestKeyDecoderHandlesEnhancedKeyboardInput(t *testing.T) {
+	var decoder keyDecoder
+	got := decoder.feed([]byte("\x1b[97;1;97u\x1b[13;1u\x1b[9;1u\x1b[27;1u\x1b[127;1u\x1b[57350;5u\x1b[57353;1u\x1b[101;3u"))
+	want := []key{
+		{kind: keyText, text: "a"},
+		{kind: keyEnter},
+		{kind: keyTab},
+		{kind: keyEscape},
+		{kind: keyBackspace},
+		{kind: keyWordLeft},
+		{kind: keyDown},
+		{kind: keyExternalEditor},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("keys = %#v, want %#v", got, want)
 	}

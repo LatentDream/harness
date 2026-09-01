@@ -384,7 +384,7 @@ var inputTips = []string{
 	"Tip: @ searches project files",
 	"Tip: / opens the command palette",
 	"Tip: Tab switches [Build], [Plan], and [Chat]",
-	"Tip: Ctrl+N inserts a newline",
+	"Tip: Shift+Enter inserts a newline",
 	"Tip: F2 toggles rendered and raw Markdown",
 	"Tip: Esc cancels current work",
 	"Tip: PgUp/PgDn, Ctrl+U/D, or the mouse wheel scroll the transcript",

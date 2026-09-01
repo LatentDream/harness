@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	enterTerminal = "\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?1004h\x1b[?1000h\x1b[?1006h"
-	leaveTerminal = "\x1b[?1006l\x1b[?1000l\x1b[?1004l\x1b[?2004l\x1b[?25h\x1b[?1049l"
+	// Request disambiguated key events, encode all keys, and include their text.
+	// This makes modified text keys such as Shift+Enter distinguishable.
+	enterTerminal = "\x1b[?1049h\x1b[>25u\x1b[?25l\x1b[?2004h\x1b[?1004h\x1b[?1000h\x1b[?1006h"
+	leaveTerminal = "\x1b[?1006l\x1b[?1000l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[?25h\x1b[?1049l"
 )
 
 var (

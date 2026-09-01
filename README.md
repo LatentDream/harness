@@ -204,7 +204,7 @@ Useful keys:
 | Key | Action |
 | --- | --- |
 | `Enter` | Submit prompt |
-| `Ctrl+N` | Insert newline |
+| `Shift+Enter` | Insert newline |
 | `Tab` | Cycle Build/Plan/Chat mode |
 | `@` | Pick a repository file |
 | `/` or `:` | Open command picker |
