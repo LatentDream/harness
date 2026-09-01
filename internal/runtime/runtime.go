@@ -208,6 +208,11 @@ func (r *Runtime) runLoop(ctx context.Context, trace *tracing.RunScope) (command
 }
 
 func (r *Runtime) handleInterruptibleTurn(ctx context.Context, submission input.Submission) error {
+	if lifecycle, ok := r.output.(input.TurnLifecycle); ok {
+		lifecycle.TurnStarted(r.sessionID)
+		defer lifecycle.TurnCompleted(r.sessionID)
+	}
+
 	interrupter, ok := r.receiver.(input.Interrupter)
 	if !ok || interrupter == nil {
 		return r.handleTurn(ctx, submission)

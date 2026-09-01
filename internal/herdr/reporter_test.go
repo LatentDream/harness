@@ -62,7 +62,7 @@ func (r *recordingRunner) wait(t *testing.T, count int) []invocation {
 func TestReporterForwardsEventsAndReportsLifecycle(t *testing.T) {
 	sink := &recordingSink{}
 	runner := &recordingRunner{wake: make(chan struct{}, 8)}
-	reporter := newReporter(sink, "/bin/herdr", "pane-1", runner.run)
+	reporter := newReporter(sink, reporterConfig{herdrBin: "/bin/herdr", herdrPaneID: "pane-1"}, runner.run)
 	defer reporter.Close()
 
 	runner.wait(t, 1)
@@ -70,6 +70,7 @@ func TestReporterForwardsEventsAndReportsLifecycle(t *testing.T) {
 	if err := reporter.Emit(context.Background(), event); err != nil {
 		t.Fatalf("Emit() error = %v", err)
 	}
+	reporter.TurnStarted("session-1")
 	calls := runner.wait(t, 2)
 
 	if !reflect.DeepEqual(sink.events, []input.Event{event}) {
@@ -87,27 +88,27 @@ func TestReporterForwardsEventsAndReportsLifecycle(t *testing.T) {
 
 func TestReporterReleasesAuthority(t *testing.T) {
 	runner := &recordingRunner{wake: make(chan struct{}, 8)}
-	reporter := newReporter(&recordingSink{}, "/bin/herdr", "pane-1", runner.run)
+	reporter := newReporter(&recordingSink{}, reporterConfig{herdrBin: "/bin/herdr", herdrPaneID: "pane-1"}, runner.run)
 	runner.wait(t, 1)
 
 	reporter.Close()
 	calls := runner.wait(t, 2)
 	want := invocation{name: "/bin/herdr", args: []string{
-		"pane", "release-agent", "pane-1", "--source", "custom:harness", "--agent", "harness",
+		"pane", "release-agent", "pane-1", "--source", "custom:harness", "--agent", "harness", "--seq", "2",
 	}}
 	if !reflect.DeepEqual(calls[1], want) {
 		t.Fatalf("release call = %#v, want %#v", calls[1], want)
 	}
 }
 
-func TestReporterDoesNotBecomeIdleBetweenInferenceAndTools(t *testing.T) {
+func TestReporterUsesTurnBoundaries(t *testing.T) {
 	runner := &recordingRunner{wake: make(chan struct{}, 8)}
-	reporter := newReporter(&recordingSink{}, "/bin/herdr", "pane-1", runner.run)
+	reporter := newReporter(&recordingSink{}, reporterConfig{herdrBin: "/bin/herdr", herdrPaneID: "pane-1"}, runner.run)
 	defer reporter.Close()
 	runner.wait(t, 1)
 
 	for _, event := range []input.Event{
-		{Kind: input.EventInferenceStarted},
+		{Kind: input.EventAssistantCompleted},
 		{Kind: input.EventInferenceEnded},
 		{Kind: input.EventToolStarted},
 		{Kind: input.EventToolCompleted},
@@ -116,18 +117,15 @@ func TestReporterDoesNotBecomeIdleBetweenInferenceAndTools(t *testing.T) {
 			t.Fatalf("Emit(%s) error = %v", event.Kind, err)
 		}
 	}
-	calls := runner.wait(t, 3)
-	for _, call := range calls[1:] {
-		if got := argumentValue(call.args, "--state"); got != "working" {
-			t.Fatalf("intermediate state = %q, want working", got)
-		}
+	reporter.TurnStarted("")
+	calls := runner.wait(t, 2)
+	if got := argumentValue(calls[1].args, "--state"); got != "working" {
+		t.Fatalf("turn state = %q, want working", got)
 	}
 
-	if err := reporter.Emit(context.Background(), input.Event{Kind: input.EventAssistantCompleted}); err != nil {
-		t.Fatalf("Emit(assistant.completed) error = %v", err)
-	}
-	calls = runner.wait(t, 4)
-	if got := argumentValue(calls[3].args, "--state"); got != "idle" {
+	reporter.TurnCompleted("")
+	calls = runner.wait(t, 3)
+	if got := argumentValue(calls[2].args, "--state"); got != "idle" {
 		t.Fatalf("completed state = %q, want idle", got)
 	}
 }
@@ -135,7 +133,7 @@ func TestReporterDoesNotBecomeIdleBetweenInferenceAndTools(t *testing.T) {
 func TestReporterIsDisabledWithoutHerdrContext(t *testing.T) {
 	sink := &recordingSink{}
 	runner := &recordingRunner{wake: make(chan struct{}, 1)}
-	reporter := newReporter(sink, "", "", runner.run)
+	reporter := newReporter(sink, reporterConfig{}, runner.run)
 	event := input.Event{Kind: input.EventInferenceStarted}
 
 	if err := reporter.Emit(context.Background(), event); err != nil {
@@ -148,6 +146,44 @@ func TestReporterIsDisabledWithoutHerdrContext(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("runner calls = %#v", runner.calls)
+	}
+}
+
+func TestReporterMirrorsTurnsToTmux(t *testing.T) {
+	runner := &recordingRunner{wake: make(chan struct{}, 8)}
+	reporter := newReporter(&recordingSink{}, reporterConfig{
+		tmuxStateScript: "/plugin/scripts/agent-state.sh",
+		tmuxPaneID:      "%7",
+	}, runner.run)
+
+	for i, action := range []func(){func() { reporter.TurnStarted("") }, func() { reporter.TurnCompleted("") }} {
+		action()
+		runner.wait(t, i+1)
+	}
+	reporter.Close()
+	calls := runner.wait(t, 3)
+	wantStates := []string{"running", "done", "off"}
+	for i, state := range wantStates {
+		if calls[i].name != "/plugin/scripts/agent-state.sh" || argumentValue(calls[i].args, "--state") != state || argumentValue(calls[i].args, "--pane") != "%7" {
+			t.Fatalf("tmux call %d = %#v, want state %q for pane %%7", i, calls[i], state)
+		}
+	}
+}
+
+func TestReporterCachesSessionID(t *testing.T) {
+	runner := &recordingRunner{wake: make(chan struct{}, 8)}
+	reporter := newReporter(&recordingSink{}, reporterConfig{herdrBin: "/bin/herdr", herdrPaneID: "pane-1"}, runner.run)
+	defer reporter.Close()
+	runner.wait(t, 1)
+
+	if err := reporter.Emit(context.Background(), input.Event{Kind: input.EventSessionLoaded, SessionID: "session-1"}); err != nil {
+		t.Fatal(err)
+	}
+	runner.wait(t, 2)
+	reporter.TurnStarted("")
+	calls := runner.wait(t, 3)
+	if got := argumentValue(calls[2].args, "--agent-session-id"); got != "session-1" {
+		t.Fatalf("cached session ID = %q, want session-1", got)
 	}
 }
 

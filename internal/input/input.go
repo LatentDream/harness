@@ -30,6 +30,13 @@ type Sink interface {
 	Emit(context.Context, Event) error
 }
 
+// TurnLifecycle is optionally implemented by sinks that observe complete turn
+// boundaries without exposing transport state as frontend events.
+type TurnLifecycle interface {
+	TurnStarted(string)
+	TurnCompleted(string)
+}
+
 type EventKind string
 
 const (
