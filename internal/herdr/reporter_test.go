@@ -187,6 +187,50 @@ func TestReporterCachesSessionID(t *testing.T) {
 	}
 }
 
+func TestReporterMirrorsSessionMetadataToTmux(t *testing.T) {
+	runner := &recordingRunner{wake: make(chan struct{}, 8)}
+	reporter := newReporter(&recordingSink{}, reporterConfig{
+		tmuxStateScript: "/plugin/scripts/agent-state.sh",
+		tmuxPaneID:      "%7",
+	}, runner.run)
+	defer reporter.Close()
+
+	if err := reporter.Emit(context.Background(), input.Event{
+		Kind: input.EventSessionLoaded, SessionID: "session-1", SessionTitle: "Fix Parser Commas",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	calls := runner.wait(t, 1)
+	if got := argumentValue(calls[0].args, "--session-id"); got != "session-1" {
+		t.Fatalf("tmux session ID = %q, want session-1", got)
+	}
+	if got := argumentValue(calls[0].args, "--session-name"); got != "Fix Parser Commas" {
+		t.Fatalf("tmux session name = %q, want Fix Parser Commas", got)
+	}
+}
+
+func TestReporterMirrorsTitleChangeWithoutChangingTmuxState(t *testing.T) {
+	runner := &recordingRunner{wake: make(chan struct{}, 8)}
+	reporter := newReporter(&recordingSink{}, reporterConfig{
+		tmuxStateScript: "/plugin/scripts/agent-state.sh",
+		tmuxPaneID:      "%7",
+	}, runner.run)
+	defer reporter.Close()
+
+	if err := reporter.Emit(context.Background(), input.Event{
+		Kind: input.EventSessionTitleChanged, SessionID: "session-1", SessionTitle: "New Title",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	calls := runner.wait(t, 1)
+	if got := argumentValue(calls[0].args, "--state"); got != "" {
+		t.Fatalf("tmux state = %q, want no state update", got)
+	}
+	if got := argumentValue(calls[0].args, "--session-name"); got != "New Title" {
+		t.Fatalf("tmux session name = %q, want New Title", got)
+	}
+}
+
 func argumentValue(args []string, name string) string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == name {

@@ -27,21 +27,23 @@ type reporterConfig struct {
 // Reporter forwards runtime events and mirrors turn-level lifecycle state to
 // Herdr and tmux when their respective environments are available.
 type Reporter struct {
-	next      input.Sink
-	config    reporterConfig
-	run       commandRunner
-	reports   chan report
-	done      chan struct{}
-	wait      sync.WaitGroup
-	once      sync.Once
-	sessionID string
-	seq       uint64
-	mu        sync.Mutex
+	next         input.Sink
+	config       reporterConfig
+	run          commandRunner
+	reports      chan report
+	done         chan struct{}
+	wait         sync.WaitGroup
+	once         sync.Once
+	sessionID    string
+	sessionTitle string
+	seq          uint64
+	mu           sync.Mutex
 }
 
 type report struct {
-	state     string
-	sessionID string
+	state        string
+	sessionID    string
+	sessionTitle string
 }
 
 func Wrap(next input.Sink) *Reporter {
@@ -93,13 +95,16 @@ func (r *Reporter) Emit(ctx context.Context, event input.Event) error {
 	if event.SessionID != "" {
 		r.mu.Lock()
 		r.sessionID = event.SessionID
+		if event.SessionTitle != "" {
+			r.sessionTitle = event.SessionTitle
+		}
 		r.mu.Unlock()
 	}
 	switch event.Kind {
 	case input.EventSessionLoaded, input.EventSessionReset:
-		if r.herdrEnabled() {
-			r.queue(report{state: "idle", sessionID: event.SessionID})
-		}
+		r.queue(report{state: "idle", sessionID: event.SessionID, sessionTitle: event.SessionTitle})
+	case input.EventSessionTitleChanged:
+		r.queue(report{sessionID: event.SessionID, sessionTitle: event.SessionTitle})
 	}
 	return nil
 }
@@ -146,6 +151,13 @@ func (r *Reporter) queue(value report) {
 	if value.sessionID == "" {
 		r.mu.Lock()
 		value.sessionID = r.sessionID
+		value.sessionTitle = r.sessionTitle
+		r.mu.Unlock()
+	} else if value.sessionTitle == "" {
+		r.mu.Lock()
+		if value.sessionID == r.sessionID {
+			value.sessionTitle = r.sessionTitle
+		}
 		r.mu.Unlock()
 	}
 	select {
@@ -182,7 +194,7 @@ func (r *Reporter) runReports() {
 }
 
 func (r *Reporter) send(value report) {
-	if r.herdrEnabled() {
+	if r.herdrEnabled() && value.state != "" {
 		seq := r.nextSequence()
 		args := []string{"pane", "report-agent", r.config.herdrPaneID,
 			"--source", reportSource, "--agent", agentName,
@@ -193,12 +205,21 @@ func (r *Reporter) send(value report) {
 		_ = r.run(context.Background(), r.config.herdrBin, args...)
 	}
 	if r.tmuxEnabled() {
-		state := "done"
-		if value.state == "working" {
-			state = "running"
+		args := []string{"--agent", agentName, "--pane", r.config.tmuxPaneID}
+		if value.state != "" {
+			state := "done"
+			if value.state == "working" {
+				state = "running"
+			}
+			args = append(args, "--state", state)
 		}
-		_ = r.run(context.Background(), r.config.tmuxStateScript, "--agent", agentName,
-			"--state", state, "--pane", r.config.tmuxPaneID)
+		if value.sessionID != "" {
+			args = append(args, "--session-id", value.sessionID)
+		}
+		if value.sessionTitle != "" {
+			args = append(args, "--session-name", value.sessionTitle)
+		}
+		_ = r.run(context.Background(), r.config.tmuxStateScript, args...)
 	}
 }
 
