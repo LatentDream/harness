@@ -49,7 +49,8 @@ type Provider interface {
 type StreamHandler func(StreamEvent) error
 
 type StreamEvent struct {
-	TextDelta string `json:"text_delta,omitempty"`
+	TextDelta      string `json:"text_delta,omitempty"`
+	ReasoningDelta string `json:"reasoning_delta,omitempty"`
 }
 
 type Selection struct {

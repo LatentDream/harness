@@ -95,6 +95,20 @@ func TestInferenceSpinnerIsIndependentFromStatus(t *testing.T) {
 	}
 }
 
+func TestModelRendersReasoningStream(t *testing.T) {
+	state := model{reasoning: make(map[streamKey]int)}
+	state.apply(input.Event{Kind: input.EventReasoningStarted, TurnID: "turn", Round: 1})
+	state.apply(input.Event{Kind: input.EventReasoningDelta, TurnID: "turn", Round: 1, Text: "Inspecting the runtime."})
+	state.apply(input.Event{Kind: input.EventReasoningCompleted, TurnID: "turn", Round: 1})
+	view := strings.Join(state.renderTranscript(80, 6), "\n")
+	if !strings.Contains(view, "REASONING") || !strings.Contains(view, "Inspecting the runtime.") {
+		t.Fatalf("reasoning missing from transcript: %q", view)
+	}
+	if len(state.reasoning) != 0 {
+		t.Fatalf("completed reasoning retained: %#v", state.reasoning)
+	}
+}
+
 func TestModelRendersDedicatedToolActivities(t *testing.T) {
 	workspace := t.TempDir()
 	state := model{
@@ -296,11 +310,19 @@ func TestUserBlockUsesConfiguredUsername(t *testing.T) {
 	}
 }
 
-func TestModelDoesNotPersistUnsupportedTool(t *testing.T) {
-	state := model{}
-	state.apply(input.Event{Kind: input.EventToolStarted, ToolCallID: "glob-1", ToolName: "glob"})
-	if len(state.blocks) != 0 {
-		t.Fatalf("unsupported tool added transcript block: %#v", state.blocks)
+func TestModelRendersSearchAndUnknownTools(t *testing.T) {
+	state := model{tools: make(map[toolKey]int)}
+	state.apply(input.Event{
+		Kind: input.EventToolStarted, ToolCallID: "glob-1", ToolName: "glob",
+		ToolActivity: input.ToolActivity{Summary: "Finding files matching **/*.go"},
+	})
+	state.apply(input.Event{
+		Kind: input.EventToolStarted, ToolCallID: "custom-1", ToolName: "custom",
+		ToolActivity: input.ToolActivity{Summary: "Running custom"},
+	})
+	view := strings.Join(state.renderTranscript(80, 8), "\n")
+	if !strings.Contains(view, "Finding files matching **/*.go") || !strings.Contains(view, "Running custom") {
+		t.Fatalf("tool activity missing from transcript: %q", view)
 	}
 }
 

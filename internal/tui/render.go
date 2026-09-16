@@ -110,6 +110,9 @@ func (m *model) renderTranscript(width, height int) []string {
 	for index := range m.blocks {
 		block := &m.blocks[index]
 		if isToolBlock(block.kind) {
+			if index == 0 || (!isToolBlock(m.blocks[index-1].kind) && m.blocks[index-1].kind != blockReasoning) {
+				all = append(all, m.colors.wrap(ansiBold+ansiGray, "REASONING"))
+			}
 			all = append(all, m.renderToolBlock(*block, width)...)
 			if index == len(m.blocks)-1 || !isToolBlock(m.blocks[index+1].kind) {
 				all = append(all, "")
@@ -118,7 +121,7 @@ func (m *model) renderTranscript(width, height int) []string {
 		}
 		label, color := m.blockLabel(*block)
 		all = append(all, m.colors.wrap(ansiBold+color, label))
-		if block.kind == blockAssistant && !m.markdownDisabled {
+		if (block.kind == blockAssistant || block.kind == blockReasoning) && !m.markdownDisabled {
 			for _, line := range m.renderAssistantMarkdown(block, contentWidth) {
 				all = append(all, "  "+line)
 			}
@@ -190,6 +193,8 @@ func (m *model) blockLabel(block transcriptBlock) (string, string) {
 		return username + "  " + mode, ansiBlue
 	case blockAssistant:
 		return "ASSISTANT", ansiCyan
+	case blockReasoning:
+		return "REASONING", ansiGray
 	case blockError:
 		return "ERROR", ansiRed
 	case blockShell:
@@ -237,7 +242,7 @@ func (m *model) renderStatus(width int) string {
 }
 
 func isToolBlock(kind blockKind) bool {
-	return kind == blockToolRead || kind == blockToolWrite || kind == blockToolBash || kind == blockToolWebfetch
+	return kind == blockToolRead || kind == blockToolWrite || kind == blockToolBash || kind == blockToolWebfetch || kind == blockToolGeneric
 }
 
 func (m *model) renderToolBlock(block transcriptBlock, width int) []string {
@@ -262,9 +267,24 @@ func (m *model) renderToolBlock(block transcriptBlock, width int) []string {
 			label = "Fetched"
 		}
 		return m.renderWebfetchActivity(label, block, width)
+	case blockToolGeneric:
+		return m.renderGenericToolActivity(block, width)
 	default:
 		return nil
 	}
+}
+
+func (m *model) renderGenericToolActivity(block transcriptBlock, width int) []string {
+	line := "› " + sanitizeInline(strings.TrimSpace(block.activity.Summary))
+	if line == "› " {
+		line = "› Running tool"
+	}
+	color := ansiGray
+	if block.activity.Error != "" {
+		color = ansiRed
+		line += " (failed: " + sanitizeInline(block.activity.Error) + ")"
+	}
+	return []string{truncateDisplay(m.colors.wrap(ansiDim+color, line), width)}
 }
 
 func (m *model) renderWebfetchActivity(label string, block transcriptBlock, width int) []string {
@@ -280,7 +300,12 @@ func (m *model) renderWebfetchActivity(label string, block transcriptBlock, widt
 
 func (m *model) renderFileActivity(label string, block transcriptBlock, width int) []string {
 	target := m.displayToolPath(block.activity.Target)
-	line := "› " + label + " " + target
+	line := "› " + label
+	if target != "" && target != "." {
+		line += " " + target
+	} else if summary := sanitizeInline(strings.TrimSpace(block.activity.Summary)); summary != "" {
+		line = "› " + summary
+	}
 	color := ansiGray
 	if block.activity.Error != "" {
 		color = ansiRed

@@ -11,7 +11,7 @@ import (
 	"latentdream/harness/internal/tracing"
 )
 
-func ToolCall(ctx context.Context, sink input.Sink, toolsByName map[string]model.Tool, call llm.ToolCall, turnID string) (llm.Message, error) {
+func ToolCall(ctx context.Context, sink input.Sink, toolsByName map[string]model.Tool, call llm.ToolCall, turnID string, round int) (llm.Message, error) {
 	spanCtx, span, err := tracing.BeginSpan(ctx, tracing.SpanStart{
 		Kind:    tracing.SpanToolCall,
 		TurnID:  turnID,
@@ -28,9 +28,11 @@ func ToolCall(ctx context.Context, sink input.Sink, toolsByName map[string]model
 		status = item.Status(call.Arguments)
 	}
 	activity := toolActivity(item, call.Arguments, "", nil)
+	activity.Summary = status
 	if err := Emit(spanCtx, sink, input.Event{
 		Kind:         input.EventToolStarted,
 		TurnID:       turnID,
+		Round:        round,
 		ToolCallID:   call.ID,
 		ToolName:     call.Name,
 		ToolActivity: activity,
@@ -56,12 +58,14 @@ func ToolCall(ctx context.Context, sink input.Sink, toolsByName map[string]model
 	})
 	message := llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: result}
 	activity = toolActivity(item, call.Arguments, result, executionErr)
+	activity.Summary = status
 	if executionErr != nil {
 		activity.Error = executionErr.Error()
 	}
 	completionErr := Emit(spanCtx, sink, input.Event{
 		Kind:         input.EventToolCompleted,
 		TurnID:       turnID,
+		Round:        round,
 		ToolCallID:   call.ID,
 		ToolName:     call.Name,
 		ToolActivity: activity,

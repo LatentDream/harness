@@ -216,6 +216,9 @@ func TestTerminalAcceptsActivityLifecycleEvents(t *testing.T) {
 	var output bytes.Buffer
 	terminal := NewTerminal(strings.NewReader(""), &output, io.Discard)
 	for _, event := range []Event{
+		{Kind: EventReasoningStarted},
+		{Kind: EventReasoningDelta, Text: "checking"},
+		{Kind: EventReasoningCompleted},
 		{Kind: EventInferenceStarted},
 		{Kind: EventInferenceEnded},
 		{Kind: EventToolStarted, ToolName: "read"},

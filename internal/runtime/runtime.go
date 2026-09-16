@@ -385,7 +385,7 @@ func (r *Runtime) inference(ctx context.Context, turnID string, mode input.Mode)
 		r.Session.Conversation = append(r.Session.Conversation, message)
 		if len(message.ToolCalls) != 0 {
 			for _, call := range message.ToolCalls {
-				toolMessage, err := execution.ToolCall(ctx, r.output, toolsByName, call, turnID)
+				toolMessage, err := execution.ToolCall(ctx, r.output, toolsByName, call, turnID, round+1)
 				if err != nil {
 					return "", err
 				}

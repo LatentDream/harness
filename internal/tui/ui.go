@@ -51,12 +51,14 @@ type blockKind int
 const (
 	blockUser blockKind = iota
 	blockAssistant
+	blockReasoning
 	blockOutput
 	blockError
 	blockToolRead
 	blockToolWrite
 	blockToolBash
 	blockToolWebfetch
+	blockToolGeneric
 	blockShell
 )
 
@@ -123,6 +125,7 @@ type model struct {
 	editor              editor
 	blocks              []transcriptBlock
 	streams             map[streamKey]int
+	reasoning           map[streamKey]int
 	tools               map[toolKey]int
 }
 
@@ -239,6 +242,7 @@ func (u *UI) Run(ctx context.Context, runRuntime func(context.Context) error) (r
 		focused:          true,
 		colors:           palette{enabled: os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"},
 		streams:          make(map[streamKey]int),
+		reasoning:        make(map[streamKey]int),
 		tools:            make(map[toolKey]int),
 	}
 	state.editor.historyIndex = 0
@@ -483,6 +487,26 @@ func (m *model) apply(event input.Event) {
 		}
 		m.blocks = append(m.blocks, transcriptBlock{kind: kind, text: event.Text, turnID: event.TurnID})
 		m.scrollOffset = 0
+	case input.EventReasoningStarted:
+		key := streamKey{turnID: event.TurnID, round: event.Round}
+		m.blocks = append(m.blocks, transcriptBlock{kind: blockReasoning, turnID: event.TurnID, round: event.Round})
+		if m.reasoning == nil {
+			m.reasoning = make(map[streamKey]int)
+		}
+		m.reasoning[key] = len(m.blocks) - 1
+		m.scrollOffset = 0
+	case input.EventReasoningDelta:
+		if index, ok := m.reasoning[streamKey{turnID: event.TurnID, round: event.Round}]; ok {
+			m.blocks[index].text += event.Text
+		}
+		m.scrollOffset = 0
+	case input.EventReasoningCompleted, input.EventReasoningAborted:
+		key := streamKey{turnID: event.TurnID, round: event.Round}
+		if index, ok := m.reasoning[key]; ok {
+			m.blocks[index].completed = event.Kind == input.EventReasoningCompleted
+			m.blocks[index].interrupted = event.Kind == input.EventReasoningAborted
+			delete(m.reasoning, key)
+		}
 	case input.EventAssistantStarted:
 		key := streamKey{turnID: event.TurnID, round: event.Round}
 		m.blocks = append(m.blocks, transcriptBlock{kind: blockAssistant, turnID: event.TurnID, round: event.Round})
@@ -526,6 +550,7 @@ func (m *model) apply(event input.Event) {
 	case input.EventSessionReset, input.EventSessionLoaded:
 		m.blocks = nil
 		m.streams = make(map[streamKey]int)
+		m.reasoning = make(map[streamKey]int)
 		m.tools = make(map[toolKey]int)
 		m.isInferenceRunning = false
 		m.isLocalShellRunning = false
@@ -557,16 +582,16 @@ func (m *model) apply(event input.Event) {
 
 func displayedToolKind(name string) (blockKind, bool) {
 	switch name {
-	case "read":
+	case "read", "glob", "grep":
 		return blockToolRead, true
-	case "write":
+	case "write", "edit":
 		return blockToolWrite, true
 	case "bash":
 		return blockToolBash, true
 	case "webfetch":
 		return blockToolWebfetch, true
 	default:
-		return 0, false
+		return blockToolGeneric, true
 	}
 }
 

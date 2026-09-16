@@ -72,6 +72,11 @@ type codexResponsesRequest struct {
 	Instructions    string           `json:"instructions,omitempty"`
 	MaxOutputTokens int              `json:"max_output_tokens,omitempty"`
 	Tools           []codexTool      `json:"tools,omitempty"`
+	Reasoning       *codexReasoning  `json:"reasoning,omitempty"`
+}
+
+type codexReasoning struct {
+	Summary string `json:"summary"`
 }
 
 type codexInputItem struct {
@@ -111,6 +116,10 @@ type codexOutputItem struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	Summary []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"summary"`
 }
 
 func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, model string, request llm.Request, stream StreamHandler) (Response, error) {
@@ -149,6 +158,9 @@ func (m *manager) sendCodex(ctx context.Context, configured configuredProvider, 
 			return Response{}, fmt.Errorf("read provider %q response: %w", configured.name, readErr)
 		}
 		message, err = codexResponseMessage(body)
+		if err == nil {
+			err = emitCodexReasoning(stream, codexReasoningSummaryFromBody(body))
+		}
 		if err == nil {
 			err = emitText(stream, message.Content)
 		}
@@ -219,6 +231,7 @@ func codexRequest(model string, input llm.Request) codexResponsesRequest {
 		Stream:          true,
 		MaxOutputTokens: input.MaxTokens,
 		Tools:           codexTools(input.Tools),
+		Reasoning:       &codexReasoning{Summary: "auto"},
 	}
 	instructions := make([]string, 0)
 
@@ -527,6 +540,35 @@ func codexJSONResponseMessage(body []byte) (llm.Message, error) {
 	return llm.Message{Role: codexResponseRole, Content: content, ToolCalls: calls}, nil
 }
 
+func codexReasoningSummaryFromBody(body []byte) string {
+	var decoded codexResponsesResponse
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return ""
+	}
+	parts := make([]string, 0)
+	for _, item := range decoded.Output {
+		if item.Type != "reasoning" {
+			continue
+		}
+		for _, summary := range item.Summary {
+			if summary.Text != "" {
+				parts = append(parts, summary.Text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func emitCodexReasoning(stream StreamHandler, text string) error {
+	if stream == nil || text == "" {
+		return nil
+	}
+	if err := stream(StreamEvent{ReasoningDelta: text}); err != nil {
+		return fmt.Errorf("provider stream callback: %w", err)
+	}
+	return nil
+}
+
 func codexJSONText(decoded codexResponsesResponse) string {
 	if strings.TrimSpace(decoded.OutputText) != "" {
 		return decoded.OutputText
@@ -583,6 +625,7 @@ func codexStreamResponseMessage(body []byte) (llm.Message, error) {
 
 func codexStreamResponseMessageReader(reader io.Reader, stream StreamHandler) (llm.Message, error) {
 	var deltas strings.Builder
+	reasoningStreamed := false
 	finalText := ""
 	var finalMessage *llm.Message
 	calls := make(map[string]*codexStreamCall)
@@ -642,7 +685,12 @@ func codexStreamResponseMessageReader(reader io.Reader, stream StreamHandler) (l
 			}
 			return fmt.Errorf("codex stream error: %s", event.Error.Message)
 		}
-		if event.Delta != "" && (event.Type == "" || strings.Contains(event.Type, "output_text")) {
+		if event.Delta != "" && strings.Contains(event.Type, "reasoning_summary") {
+			reasoningStreamed = true
+			if err := emitCodexReasoning(stream, event.Delta); err != nil {
+				return err
+			}
+		} else if event.Delta != "" && (event.Type == "" || strings.Contains(event.Type, "output_text")) {
 			deltas.WriteString(event.Delta)
 			if err := emitText(stream, event.Delta); err != nil {
 				return err
@@ -676,6 +724,11 @@ func codexStreamResponseMessageReader(reader io.Reader, stream StreamHandler) (l
 			message, err := codexJSONResponseMessage(event.Response)
 			if err == nil {
 				finalMessage = &message
+			}
+			if !reasoningStreamed {
+				if err := emitCodexReasoning(stream, codexReasoningSummaryFromBody(event.Response)); err != nil {
+					return err
+				}
 			}
 		}
 

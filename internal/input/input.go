@@ -46,6 +46,10 @@ const (
 	EventAssistantDelta      EventKind = "assistant.delta"
 	EventAssistantCompleted  EventKind = "assistant.completed"
 	EventAssistantAborted    EventKind = "assistant.aborted"
+	EventReasoningStarted    EventKind = "reasoning.started"
+	EventReasoningDelta      EventKind = "reasoning.delta"
+	EventReasoningCompleted  EventKind = "reasoning.completed"
+	EventReasoningAborted    EventKind = "reasoning.aborted"
 	EventInferenceStarted    EventKind = "inference.started"
 	EventInferenceEnded      EventKind = "inference.ended"
 	EventToolStarted         EventKind = "tool.started"
@@ -87,6 +91,7 @@ type Event struct {
 // ToolActivity contains presentation-safe tool metadata. It must not contain
 // raw arguments because those may include file contents or other large values.
 type ToolActivity struct {
+	Summary string `json:"summary,omitempty"`
 	Target  string `json:"target,omitempty"`
 	Command string `json:"command,omitempty"`
 	Output  string `json:"output,omitempty"`

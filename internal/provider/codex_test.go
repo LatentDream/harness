@@ -59,6 +59,10 @@ func TestCodexRequestIncludesRequiredResponseFlags(t *testing.T) {
 	if stream != true {
 		t.Fatalf("expected stream true, got %#v", stream)
 	}
+	reasoning, ok := raw["reasoning"].(map[string]any)
+	if !ok || reasoning["summary"] != "auto" {
+		t.Fatalf("expected automatic reasoning summary, got %#v", raw["reasoning"])
+	}
 }
 
 func TestCodexRequestIncludesToolsAndToolMessages(t *testing.T) {
@@ -82,6 +86,30 @@ func TestCodexRequestIncludesToolsAndToolMessages(t *testing.T) {
 	}
 	if payload.Input[2].Type != "function_call_output" || payload.Input[2].CallID != "call_1" || payload.Input[2].Output != "tool result" {
 		t.Fatalf("unexpected function output input: %#v", payload.Input[2])
+	}
+}
+
+func TestCodexStreamEmitsReasoningSummarySeparately(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.reasoning_summary_text.delta","delta":"Inspecting files"}`,
+		``,
+		`data: {"type":"response.output_text.delta","delta":"done"}`,
+		``,
+	}, "\n")
+	var events []StreamEvent
+	message, err := codexStreamResponseMessageReader(strings.NewReader(body), func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("decode stream: %v", err)
+	}
+	if message.Content != "done" {
+		t.Fatalf("assistant content = %q", message.Content)
+	}
+	want := []StreamEvent{{ReasoningDelta: "Inspecting files"}, {TextDelta: "done"}}
+	if len(events) != len(want) || events[0] != want[0] || events[1] != want[1] {
+		t.Fatalf("stream events = %#v, want %#v", events, want)
 	}
 }
 

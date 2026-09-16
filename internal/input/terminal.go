@@ -112,7 +112,8 @@ func (t *Terminal) Emit(_ context.Context, event Event) error {
 		}
 		t.streaming = false
 		return t.showStatus()
-	case EventInferenceStarted, EventInferenceEnded, EventToolStarted, EventToolCompleted,
+	case EventReasoningStarted, EventReasoningDelta, EventReasoningCompleted, EventReasoningAborted,
+		EventInferenceStarted, EventInferenceEnded, EventToolStarted, EventToolCompleted,
 		EventProviderSelection, EventSessionReset, EventSessionLoaded, EventSessionTitleChanged:
 		return nil
 	default:

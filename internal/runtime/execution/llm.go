@@ -47,12 +47,23 @@ func LLMCall(
 		return provider.Response{}, errors.Join(err, endErr, tracing.Checkpoint(callCtx))
 	}
 
+	reasoning := reasoningOutput{ctx: callCtx, sink: sink, turnID: turnID, round: round}
 	response, callErr := aiProvider.Send(callCtx, request, func(event provider.StreamEvent) error {
-		return output.delta(event.TextDelta)
+		return errors.Join(reasoning.delta(event.ReasoningDelta), output.delta(event.TextDelta))
 	})
-	callErr = errors.Join(callErr, Emit(callCtx, sink, input.Event{
-		Kind: input.EventInferenceEnded, TurnID: turnID, Round: round,
-	}))
+	if callErr != nil {
+		abortErr := errors.Join(
+			reasoning.finish(input.EventReasoningAborted),
+			output.finish(input.EventAssistantAborted, output.text.String()),
+			Emit(callCtx, sink, input.Event{Kind: input.EventInferenceEnded, TurnID: turnID, Round: round}),
+		)
+		span.End(callErr, nil)
+		return provider.Response{}, errors.Join(callErr, abortErr, tracing.Checkpoint(callCtx))
+	}
+	callErr = errors.Join(
+		reasoning.finish(input.EventReasoningCompleted),
+		Emit(callCtx, sink, input.Event{Kind: input.EventInferenceEnded, TurnID: turnID, Round: round}),
+	)
 	if callErr != nil {
 		abortErr := output.finish(input.EventAssistantAborted, output.text.String())
 		span.End(callErr, nil)
@@ -89,6 +100,42 @@ func LLMCall(
 		}{Message: response.Message},
 	})
 	return response, tracing.Checkpoint(callCtx)
+}
+
+type reasoningOutput struct {
+	ctx     context.Context
+	sink    input.Sink
+	turnID  string
+	round   int
+	started bool
+}
+
+func (o *reasoningOutput) delta(text string) error {
+	if text == "" {
+		return nil
+	}
+	if !o.started {
+		if err := Emit(o.ctx, o.sink, input.Event{
+			Kind: input.EventReasoningStarted, TurnID: o.turnID, Round: o.round,
+		}); err != nil {
+			return err
+		}
+		o.started = true
+	}
+	return Emit(o.ctx, o.sink, input.Event{
+		Kind: input.EventReasoningDelta, TurnID: o.turnID, Round: o.round, Text: text,
+	})
+}
+
+func (o *reasoningOutput) finish(kind input.EventKind) error {
+	if !o.started {
+		return nil
+	}
+	err := Emit(o.ctx, o.sink, input.Event{
+		Kind: kind, TurnID: o.turnID, Round: o.round,
+	})
+	o.started = false
+	return err
 }
 
 type assistantOutput struct {
