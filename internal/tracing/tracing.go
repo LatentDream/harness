@@ -171,6 +171,7 @@ const (
 	KindTurnStarted         Kind = "turn.started"
 	KindTurnEnded           Kind = "turn.ended"
 	KindUserInput           Kind = "user.input"
+	KindSteeringInput       Kind = "steering.input"
 	KindCommandStarted      Kind = "command.started"
 	KindCommandEnded        Kind = "command.ended"
 	KindLLMRequest          Kind = "llm.request"

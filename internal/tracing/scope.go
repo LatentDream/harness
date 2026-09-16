@@ -201,6 +201,15 @@ func UserInput(ctx context.Context, turnID string, text string, mode input.Mode)
 	})
 }
 
+// SteeringInput records guidance accepted while a turn is executing.
+func SteeringInput(ctx context.Context, turnID string, text string, mode input.Mode) {
+	Record(ctx, Event{
+		Kind:    KindSteeringInput,
+		TurnID:  turnID,
+		Payload: UserInputPayload{Text: text, Mode: mode},
+	})
+}
+
 // Checkpoint returns and clears recording errors accumulated on the active run.
 func Checkpoint(ctx context.Context) error {
 	err := runStateFromContext(ctx).checkpoint()

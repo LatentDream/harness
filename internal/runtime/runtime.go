@@ -49,6 +49,7 @@ type Runtime struct {
 	pendingSessionID string
 	titleGenerator   TitleGenerator
 	titleUpdater     TitleUpdater
+	steering         *input.SteeringInbox
 }
 
 type TitleGenerator interface {
@@ -69,6 +70,7 @@ type Options struct {
 	SessionTitle   string
 	TitleGenerator TitleGenerator
 	TitleUpdater   TitleUpdater
+	Steering       *input.SteeringInbox
 }
 
 func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sink, options Options) *Runtime {
@@ -77,6 +79,9 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 	}
 	if options.Clipboard == nil {
 		options.Clipboard = clipboard.NewSystem()
+	}
+	if options.Steering == nil {
+		options.Steering = input.NewSteeringInbox()
 	}
 	r := &Runtime{
 		id:             uuid.New(),
@@ -92,6 +97,7 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 		sessionTitle:   options.SessionTitle,
 		titleGenerator: options.TitleGenerator,
 		titleUpdater:   options.TitleUpdater,
+		steering:       options.Steering,
 	}
 	if options.InitialSession != nil {
 		r.Session = cloneSession(*options.InitialSession)
@@ -103,6 +109,19 @@ func New(aiProvider provider.Provider, receiver input.Receiver, output input.Sin
 }
 
 func (r *Runtime) SwitchSessionID() string { return r.pendingSessionID }
+
+// SendMessage queues guidance for the currently executing turn. The model sees
+// it at the next safe request boundary; an in-flight provider or tool call is
+// never mutated or cancelled.
+func (r *Runtime) SendMessage(ctx context.Context, text string) error {
+	if r == nil || r.steering == nil {
+		return input.ErrNoActiveTurn
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return r.steering.SendMessage(ctx, text)
+}
 
 func (r *Runtime) Run(ctx context.Context) (runErr error) {
 	_, runErr = r.RunSession(ctx)
@@ -301,9 +320,21 @@ func (r *Runtime) handleTurn(ctx context.Context, submission input.Submission) e
 
 	rollbackIndex := len(r.Session.Conversation)
 	shouldCreateTitle := r.sessionTitle == "" && countUserMessages(r.Session.Conversation) == 0
+	if err := r.steering.BeginTurn(); err != nil {
+		operationErr := fmt.Errorf("start turn guidance: %w", err)
+		turn.End(operationErr, "", r.sessionState())
+		return errors.Join(operationErr, turn.Checkpoint())
+	}
+	defer r.steering.EndTurn()
+
 	r.Session.Conversation = append(r.Session.Conversation, llm.Message{Role: llm.RoleUser, Content: submission.Text})
 
 	response, inferenceErr := r.inference(ctx, turnID, submission.Mode)
+	for _, text := range r.steering.EndTurn() {
+		// Guidance accepted just as an operation failed still belongs in the
+		// trace, but the rollback below intentionally keeps it out of history.
+		tracing.SteeringInput(ctx, turnID, text, submission.Mode)
+	}
 	if inferenceErr != nil {
 		r.Session.Conversation = r.Session.Conversation[:rollbackIndex]
 
@@ -352,19 +383,38 @@ func (r *Runtime) inference(ctx context.Context, turnID string, mode input.Mode)
 
 		message := response.Message
 		r.Session.Conversation = append(r.Session.Conversation, message)
-		if len(message.ToolCalls) == 0 {
-			return message.Content, nil
-		}
-		for _, call := range message.ToolCalls {
-			toolMessage, err := execution.ToolCall(ctx, r.output, toolsByName, call, turnID)
-			if err != nil {
+		if len(message.ToolCalls) != 0 {
+			for _, call := range message.ToolCalls {
+				toolMessage, err := execution.ToolCall(ctx, r.output, toolsByName, call, turnID)
+				if err != nil {
+					return "", err
+				}
+				r.Session.Conversation = append(r.Session.Conversation, toolMessage)
+			}
+			if err := r.appendSteering(ctx, turnID, mode, r.steering.Drain()); err != nil {
 				return "", err
 			}
-			r.Session.Conversation = append(r.Session.Conversation, toolMessage)
+			continue
+		}
+
+		steering, closed := r.steering.DrainOrClose()
+		if err := r.appendSteering(ctx, turnID, mode, steering); err != nil {
+			return "", err
+		}
+		if closed {
+			return message.Content, nil
 		}
 	}
 
 	return "", errors.New("tool call limit exceeded")
+}
+
+func (r *Runtime) appendSteering(ctx context.Context, turnID string, mode input.Mode, messages []string) error {
+	for _, text := range messages {
+		r.Session.Conversation = append(r.Session.Conversation, llm.Message{Role: llm.RoleUser, Content: text})
+		tracing.SteeringInput(ctx, turnID, text, mode)
+	}
+	return tracing.Checkpoint(ctx)
 }
 
 func (r *Runtime) toolsForMode(mode input.Mode) []model.Tool {

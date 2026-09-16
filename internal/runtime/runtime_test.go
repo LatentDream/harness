@@ -420,6 +420,96 @@ func TestRunInterruptCancelsCurrentTurnAndContinues(t *testing.T) {
 	}
 }
 
+func TestSendMessageSteersActiveTurnAtNextModelBoundary(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	aiProvider := &steeringProvider{started: started, release: release}
+	runtime := New(aiProvider, &scriptedInput{}, &scriptedInput{}, Options{})
+	if err := runtime.initialize(); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runtime.handleTurn(context.Background(), input.Submission{Text: "initial", Mode: input.ModeBuild})
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first provider request did not start")
+	}
+	if err := runtime.SendMessage(context.Background(), "focus on the parser"); err != nil {
+		t.Fatalf("send guidance: %v", err)
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("turn failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("turn did not finish")
+	}
+
+	if len(aiProvider.queries) != 2 {
+		t.Fatalf("provider calls = %d, want 2", len(aiProvider.queries))
+	}
+	messages := aiProvider.queries[1].Messages
+	if len(messages) != 4 || messages[2].Role != llm.RoleAssistant || messages[2].Content != "first answer" || messages[3].Role != llm.RoleUser || messages[3].Content != "focus on the parser" {
+		t.Fatalf("second request did not contain ordered guidance: %#v", messages)
+	}
+	if err := runtime.SendMessage(context.Background(), "too late"); !errors.Is(err, input.ErrNoActiveTurn) {
+		t.Fatalf("send after completion error = %v, want ErrNoActiveTurn", err)
+	}
+}
+
+func TestSendMessageSteeringIsTracedWithActiveTurn(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	aiProvider := &steeringProvider{started: started, release: release}
+	recorder := &recordingTraceRecorder{run: &recordingTraceRun{}}
+	frontend := &scriptedInput{receives: []receiveResult{{text: "initial"}, {text: "/exit"}}}
+	runtime := New(aiProvider, frontend, frontend, Options{})
+
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(tracing.Init(context.Background(), recorder)) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first provider request did not start")
+	}
+	if err := runtime.SendMessage(context.Background(), "trace this"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not finish")
+	}
+
+	for _, event := range recorder.run.events {
+		if event.Kind == tracing.KindSteeringInput {
+			payload, ok := event.Payload.(tracing.UserInputPayload)
+			if !ok || payload.Text != "trace this" || event.TurnID == "" {
+				t.Fatalf("invalid steering trace: %#v", event)
+			}
+			return
+		}
+	}
+	t.Fatal("steering trace event missing")
+}
+
+func TestSendMessageRejectsBlankGuidance(t *testing.T) {
+	runtime := New(&fakeProvider{}, &scriptedInput{}, &scriptedInput{}, Options{})
+	if err := runtime.SendMessage(context.Background(), "  \n"); !errors.Is(err, input.ErrEmptySteeringInput) {
+		t.Fatalf("blank guidance error = %v", err)
+	}
+}
+
 func TestRunParentCancellationStillStopsRuntime(t *testing.T) {
 	userInput := &scriptedInput{
 		receives:   []receiveResult{{text: "long task"}},
@@ -994,6 +1084,32 @@ func (f *fakeProvider) Send(ctx context.Context, query llm.Request, stream provi
 		}
 	}
 	return response, nil
+}
+
+type steeringProvider struct {
+	queries []llm.Request
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *steeringProvider) Current() provider.Selection {
+	return provider.Selection{Provider: "fake", Model: "steering"}
+}
+func (p *steeringProvider) Available() []provider.Selection { return []provider.Selection{p.Current()} }
+func (p *steeringProvider) Use(string, string) error        { return nil }
+func (p *steeringProvider) Send(ctx context.Context, request llm.Request, stream provider.StreamHandler) (provider.Response, error) {
+	request.Messages = append([]llm.Message(nil), request.Messages...)
+	p.queries = append(p.queries, request)
+	if len(p.queries) == 1 {
+		close(p.started)
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return provider.Response{}, ctx.Err()
+		}
+		return provider.Response{Message: llm.Message{Role: llm.RoleAssistant, Content: "first answer"}}, nil
+	}
+	return provider.Response{Message: llm.Message{Role: llm.RoleAssistant, Content: "revised answer"}}, nil
 }
 
 type failingTool struct{}

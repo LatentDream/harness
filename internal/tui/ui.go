@@ -26,6 +26,7 @@ type Options struct {
 	Commands         *command.Registry
 	Models           []provider.Selection
 	Sessions         command.SessionResolver
+	Steering         input.SteeringSender
 }
 
 type UI struct {
@@ -637,12 +638,28 @@ func (u *UI) handleKey(ctx context.Context, state *model, pressed key) (bool, er
 		}
 		return false, u.editPromptExternally(ctx, state)
 	case keyEnter:
-		if !state.ready {
-			state.notice = "still working; send when ready"
-			return false, nil
-		}
 		text := state.editor.value()
 		if strings.TrimSpace(text) == "" {
+			return false, nil
+		}
+		if !state.ready {
+			if state.isLocalShellRunning {
+				state.notice = "local command is still running"
+				return false, nil
+			}
+			if u.options.Steering == nil {
+				state.notice = "current execution does not accept guidance"
+				return false, nil
+			}
+			if err := u.options.Steering.SendMessage(ctx, text); err != nil {
+				state.notice = err.Error()
+				return false, nil
+			}
+			state.editor.remember(text)
+			state.blocks = append(state.blocks, transcriptBlock{kind: blockUser, text: text, mode: state.mode})
+			state.scrollOffset = 0
+			state.notice = "guidance queued"
+			state.editor.reset()
 			return false, nil
 		}
 		if state.promptMode == promptShell {
