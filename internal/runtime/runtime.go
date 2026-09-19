@@ -60,6 +60,14 @@ type TitleUpdater interface {
 	SetTitle(context.Context, string) (string, error)
 }
 
+type promptContextProvider interface {
+	PromptContext() string
+}
+
+type conversationStateRestorer interface {
+	Restore([]llm.Message)
+}
+
 type Options struct {
 	Commands       *command.Registry
 	Clipboard      command.Clipboard
@@ -337,6 +345,7 @@ func (r *Runtime) handleTurn(ctx context.Context, submission input.Submission) e
 	}
 	if inferenceErr != nil {
 		r.Session.Conversation = r.Session.Conversation[:rollbackIndex]
+		restoreToolState(r.Tools, r.Session.Conversation)
 
 		turn.Rollback(rollbackIndex, r.sessionState())
 		var writeErr error
@@ -372,7 +381,7 @@ func (r *Runtime) inference(ctx context.Context, turnID string, mode input.Mode)
 	toolsByName := tool.ByName(availableTools)
 
 	for round := 0; round < maxToolRounds; round++ {
-		messages := messagesForMode(r.Session.Conversation, mode)
+		messages := r.messagesForRequest(mode, availableTools)
 		response, err := execution.LLMCall(ctx, r.output, r.Provider, llm.Request{
 			Messages: messages,
 			Tools:    definitions,
@@ -420,11 +429,34 @@ func (r *Runtime) appendSteering(ctx context.Context, turnID string, mode input.
 func (r *Runtime) toolsForMode(mode input.Mode) []model.Tool {
 	switch mode {
 	case input.ModePlan:
-		return tool.WithCapability(r.Tools, model.CapabilityReadOnly)
+		available := tool.WithCapability(r.Tools, model.CapabilityReadOnly)
+		return append(available, tool.WithCapability(r.Tools, model.CapabilityAgentState)...)
 	case input.ModeChat:
 		return r.ChatTools
 	default:
 		return r.Tools
+	}
+}
+
+func (r *Runtime) messagesForRequest(mode input.Mode, availableTools []model.Tool) []llm.Message {
+	messages := messagesForMode(r.Session.Conversation, mode)
+	if mode == input.ModeChat {
+		return messages
+	}
+	for _, item := range availableTools {
+		provider, ok := item.(promptContextProvider)
+		if ok {
+			messages = messagesWithInstruction(messages, provider.PromptContext())
+		}
+	}
+	return messages
+}
+
+func restoreToolState(tools []model.Tool, messages []llm.Message) {
+	for _, item := range tools {
+		if restorer, ok := item.(conversationStateRestorer); ok {
+			restorer.Restore(messages)
+		}
 	}
 }
 
@@ -464,6 +496,7 @@ func (r *Runtime) initialize() error {
 		r.Tools = tool.NewDefault()
 	}
 	r.Session.Init()
+	restoreToolState(r.Tools, r.Session.Conversation)
 	return nil
 }
 

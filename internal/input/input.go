@@ -91,9 +91,16 @@ type Event struct {
 // ToolActivity contains presentation-safe tool metadata. It must not contain
 // raw arguments because those may include file contents or other large values.
 type ToolActivity struct {
-	Summary string `json:"summary,omitempty"`
-	Target  string `json:"target,omitempty"`
-	Command string `json:"command,omitempty"`
-	Output  string `json:"output,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Summary string             `json:"summary,omitempty"`
+	Target  string             `json:"target,omitempty"`
+	Command string             `json:"command,omitempty"`
+	Output  string             `json:"output,omitempty"`
+	Error   string             `json:"error,omitempty"`
+	Items   []ToolActivityItem `json:"items,omitempty"`
+}
+
+type ToolActivityItem struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+	Status  string `json:"status"`
 }

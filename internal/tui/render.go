@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,7 +243,7 @@ func (m *model) renderStatus(width int) string {
 }
 
 func isToolBlock(kind blockKind) bool {
-	return kind == blockToolRead || kind == blockToolWrite || kind == blockToolBash || kind == blockToolWebfetch || kind == blockToolGeneric
+	return kind == blockToolRead || kind == blockToolWrite || kind == blockToolBash || kind == blockToolWebfetch || kind == blockToolTodo || kind == blockToolGeneric
 }
 
 func (m *model) renderToolBlock(block transcriptBlock, width int) []string {
@@ -267,11 +268,54 @@ func (m *model) renderToolBlock(block transcriptBlock, width int) []string {
 			label = "Fetched"
 		}
 		return m.renderWebfetchActivity(label, block, width)
+	case blockToolTodo:
+		return m.renderTodoActivity(block, width)
 	case blockToolGeneric:
 		return m.renderGenericToolActivity(block, width)
 	default:
 		return nil
 	}
+}
+
+func (m *model) renderTodoActivity(block transcriptBlock, width int) []string {
+	if block.activity.Error != "" {
+		return []string{truncateDisplay(m.colors.wrap(ansiRed, "› TODO failed: "+sanitizeInline(block.activity.Error)), width)}
+	}
+	if !block.completed {
+		return []string{truncateDisplay(m.colors.wrap(ansiDim+ansiGray, "› Updating TODO list"), width)}
+	}
+	if len(block.activity.Items) == 0 {
+		return []string{m.colors.wrap(ansiDim+ansiGray, "› TODO list cleared")}
+	}
+	completed := 0
+	for _, item := range block.activity.Items {
+		if item.Status == "completed" {
+			completed++
+		}
+	}
+	lines := []string{truncateDisplay(m.colors.wrap(ansiBold+ansiCyan, fmt.Sprintf("› TODO  %d/%d complete", completed, len(block.activity.Items))), width)}
+	for _, item := range block.activity.Items {
+		marker, style := "○", ansiDim+ansiGray
+		switch item.Status {
+		case "completed":
+			marker, style = "✓", ansiDim+ansiGreen
+		case "in_progress":
+			marker, style = "◉", ansiYellow
+		}
+		content := sanitizeInline(item.Content)
+		wrapped := wrapText(content, max(1, width-4))
+		if len(wrapped) == 0 {
+			wrapped = []string{""}
+		}
+		for i, line := range wrapped {
+			prefix := "    "
+			if i == 0 {
+				prefix = "  " + marker + " "
+			}
+			lines = append(lines, truncateDisplay(m.colors.wrap(style, prefix+line), width))
+		}
+	}
+	return lines
 }
 
 func (m *model) renderGenericToolActivity(block transcriptBlock, width int) []string {

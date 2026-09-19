@@ -90,9 +90,14 @@ func toolActivity(item model.Tool, arguments []byte, result string, executionErr
 		return input.ToolActivity{}
 	}
 	presentation := presenter.Present(arguments, result, executionErr)
+	items := make([]input.ToolActivityItem, len(presentation.Items))
+	for i, item := range presentation.Items {
+		items[i] = input.ToolActivityItem{ID: item.ID, Content: item.Content, Status: item.Status}
+	}
 	return input.ToolActivity{
 		Target:  presentation.Target,
 		Command: presentation.Command,
 		Output:  presentation.Output,
+		Items:   items,
 	}
 }

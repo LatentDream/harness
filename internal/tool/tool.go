@@ -8,6 +8,7 @@ import (
 	"latentdream/harness/internal/tool/grep"
 	"latentdream/harness/internal/tool/model"
 	"latentdream/harness/internal/tool/read"
+	"latentdream/harness/internal/tool/todo"
 	"latentdream/harness/internal/tool/webfetch"
 	"latentdream/harness/internal/tool/write"
 )
@@ -48,7 +49,7 @@ func WithCapability(tools []model.Tool, capability model.Capability) []model.Too
 }
 
 func NewDefault() []model.Tool {
-	return []model.Tool{read.New(), write.New(), edit.New(), glob.New(), grep.New(), webfetch.New(), bash.New()}
+	return []model.Tool{read.New(), write.New(), edit.New(), glob.New(), grep.New(), webfetch.New(), bash.New(), todo.New()}
 }
 
 func NewChatDefault() []model.Tool {

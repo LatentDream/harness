@@ -24,7 +24,7 @@ Harness is a work in progress. See [todo.md](todo.md) for the roadmap.
 - Interactive terminal UI when running in a TTY.
 - Line-oriented mode for redirected input/output.
 - Build, Plan, and Chat modes.
-- Tool calling support for reading, writing, searching, globbing, and shell commands.
+- Tool calling support for reading, writing, searching, globbing, shell commands, and session-scoped TODO tracking.
 - Provider/model switching with `:model` or `/model`.
 - New session support with `:new` or `/new`.
 - Resume the active session for the current folder with `--continue` or `-c`.
@@ -211,4 +211,4 @@ Useful keys:
 | `!` | Run a local shell command and insert truncated output into the next prompt |
 | `Ctrl+C` | Cancel and exit |
 
-Build mode allows the full configured tool set. Plan mode exposes only read-only tools. Chat mode is conversational and attaches no coding tools by default; runtime integrations may allow only `webfetch`.
+Build mode allows the full configured tool set. Plan mode exposes read-only workspace tools plus the session-scoped `todo` tool. The current TODO list is supplied to every Build and Plan model step and restored with the session; it does not modify a repository `todo.md`. Chat mode is conversational, does not receive TODO context, and attaches no coding tools by default; runtime integrations may allow only `webfetch`.

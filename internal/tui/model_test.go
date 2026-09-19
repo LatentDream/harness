@@ -310,6 +310,26 @@ func TestUserBlockUsesConfiguredUsername(t *testing.T) {
 	}
 }
 
+func TestModelRendersTodoTool(t *testing.T) {
+	state := model{tools: make(map[toolKey]int)}
+	items := []input.ToolActivityItem{
+		{ID: "done", Content: "Inspect runtime", Status: "completed"},
+		{ID: "active", Content: "Implement the TODO tool", Status: "in_progress"},
+		{ID: "later", Content: "Run tests", Status: "pending"},
+	}
+	state.apply(input.Event{Kind: input.EventToolStarted, ToolCallID: "todo-1", ToolName: "todo"})
+	state.apply(input.Event{Kind: input.EventToolCompleted, ToolCallID: "todo-1", ToolName: "todo", ToolActivity: input.ToolActivity{Items: items}})
+	view := strings.Join(state.renderTranscript(80, 8), "\n")
+	for _, expected := range []string{"TODO  1/3 complete", "✓ Inspect runtime", "◉ Implement the TODO tool", "○ Run tests"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("TODO transcript missing %q: %q", expected, view)
+		}
+	}
+	if len(state.tools) != 0 {
+		t.Fatalf("completed TODO retained: %#v", state.tools)
+	}
+}
+
 func TestModelRendersSearchAndUnknownTools(t *testing.T) {
 	state := model{tools: make(map[toolKey]int)}
 	state.apply(input.Event{

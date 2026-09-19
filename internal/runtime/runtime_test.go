@@ -19,6 +19,7 @@ import (
 	"latentdream/harness/internal/session/llm"
 	"latentdream/harness/internal/tool"
 	"latentdream/harness/internal/tool/model"
+	todotool "latentdream/harness/internal/tool/todo"
 	"latentdream/harness/internal/tracing"
 )
 
@@ -92,7 +93,7 @@ func TestRunUsesRestoredSessionWithoutAddingSystemPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages := aiProvider.queries[0].Messages
-	if len(messages) != 4 || messages[0].Content != "original system" || messages[3].Content != "continue" {
+	if len(messages) != 4 || messages[0].Content != "original system\n\n"+todotool.EmptyInstruction || messages[3].Content != "continue" {
 		t.Fatalf("restored messages = %#v", messages)
 	}
 	if len(restored.Conversation) != 3 {
@@ -138,7 +139,7 @@ func TestRunSendsUserInputAndWritesResponse(t *testing.T) {
 		t.Fatalf("expected one query, got %d", len(aiProvider.queries))
 	}
 	expectedMessages := []llm.Message{
-		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt()},
+		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt() + "\n\n" + todotool.EmptyInstruction},
 		{Role: "user", Content: "  hello  "},
 	}
 	if !reflect.DeepEqual(aiProvider.queries[0].Messages, expectedMessages) {
@@ -260,7 +261,7 @@ func TestRunPlanModeUsesReadOnlyToolsAndEphemeralInstruction(t *testing.T) {
 		t.Fatalf("expected two plan requests, got %d", len(aiProvider.queries))
 	}
 	for _, query := range aiProvider.queries {
-		if got := toolNames(query.Tools); !reflect.DeepEqual(got, []string{"read", "glob", "grep", "webfetch"}) {
+		if got := toolNames(query.Tools); !reflect.DeepEqual(got, []string{"read", "glob", "grep", "webfetch", "todo"}) {
 			t.Fatalf("expected only read-only plan tools, got %#v", got)
 		}
 		first := query.Messages[0]
@@ -310,6 +311,82 @@ func TestRunChatModeUsesNoToolsAndEphemeralInstruction(t *testing.T) {
 	payload := recorder.run.events[0].Payload.(tracing.UserInputPayload)
 	if payload.Mode != input.ModeChat {
 		t.Fatalf("expected normalized chat mode in trace, got %#v", payload)
+	}
+}
+
+func TestRunTodoIsInjectedAfterUpdateAndRestored(t *testing.T) {
+	arguments := json.RawMessage(`{"todos":[{"id":"implement","content":"Implement TODO tool","status":"in_progress"}]}`)
+	userInput := &scriptedInput{receives: []receiveResult{{text: "do the work"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{responses: []provider.Response{
+		{Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "todo-call", Name: "todo", Arguments: arguments}}}},
+		{Message: llm.Message{Role: llm.RoleAssistant, Content: "working"}},
+	}}
+	runtime := New(aiProvider, userInput, userInput, Options{})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aiProvider.queries) != 2 || !strings.Contains(aiProvider.queries[1].Messages[0].Content, "[in_progress] implement: Implement TODO tool") {
+		t.Fatalf("updated TODO was not injected: %#v", aiProvider.queries)
+	}
+	for _, message := range runtime.Session.Conversation {
+		if message.Role == llm.RoleSystem && strings.Contains(message.Content, "Current TODO list") {
+			t.Fatal("ephemeral TODO context was persisted")
+		}
+	}
+
+	restoredProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "resumed"}}}}
+	restoredInput := &scriptedInput{receives: []receiveResult{{text: "continue"}, {text: "/exit"}}}
+	restored := New(restoredProvider, restoredInput, restoredInput, Options{InitialSession: &runtime.Session})
+	if err := restored.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(restoredProvider.queries[0].Messages[0].Content, "[in_progress] implement: Implement TODO tool") {
+		t.Fatalf("restored TODO was not injected: %#v", restoredProvider.queries[0].Messages)
+	}
+}
+
+func TestRunRollsBackTodoStateAfterFailedTurn(t *testing.T) {
+	arguments := json.RawMessage(`{"todos":[{"id":"temporary","content":"Must roll back","status":"in_progress"}]}`)
+	userInput := &scriptedInput{receives: []receiveResult{{text: "first"}, {text: "second"}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{
+		responses: []provider.Response{
+			{Message: llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "todo-call", Name: "todo", Arguments: arguments}}}},
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "failed response"}},
+			{Message: llm.Message{Role: llm.RoleAssistant, Content: "recovered"}},
+		},
+		streamErrors: []error{nil, errors.New("provider failed after TODO update"), nil},
+	}
+	runtime := New(aiProvider, userInput, userInput, Options{})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(aiProvider.queries) != 3 {
+		t.Fatalf("provider queries = %d", len(aiProvider.queries))
+	}
+	context := aiProvider.queries[2].Messages[0].Content
+	if !strings.Contains(context, todotool.EmptyInstruction) || strings.Contains(context, "Must roll back") {
+		t.Fatalf("rolled-back TODO leaked into later turn: %q", context)
+	}
+}
+
+func TestRunChatModeDoesNotExposeOrInjectTodo(t *testing.T) {
+	initial := session.Session{Conversation: []llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "todo-call", Name: "todo"}}},
+		{Role: llm.RoleTool, ToolCallID: "todo-call", Content: `{"todos":[{"id":"a","content":"hidden in chat","status":"pending"}]}`},
+	}}
+	userInput := &scriptedInput{receives: []receiveResult{{text: "chat", mode: input.ModeChat}, {text: "/exit"}}}
+	aiProvider := &fakeProvider{responses: []provider.Response{{Message: llm.Message{Role: llm.RoleAssistant, Content: "hello"}}}}
+	runtime := New(aiProvider, userInput, userInput, Options{InitialSession: &initial, ChatTools: tool.NewChatDefault()})
+	if err := runtime.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	query := aiProvider.queries[0]
+	if strings.Contains(query.Messages[0].Content, "Current TODO list") || strings.Contains(query.Messages[0].Content, "hidden in chat") {
+		t.Fatalf("TODO context leaked into chat system instruction: %q", query.Messages[0].Content)
+	}
+	if got := toolNames(query.Tools); !reflect.DeepEqual(got, []string{"webfetch"}) {
+		t.Fatalf("chat tools = %#v", got)
 	}
 }
 
@@ -564,7 +641,7 @@ func TestRunKeepsConversationHistory(t *testing.T) {
 		t.Fatalf("expected two queries, got %d", len(aiProvider.queries))
 	}
 	expectedSecondQuery := []llm.Message{
-		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt()},
+		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt() + "\n\n" + todotool.EmptyInstruction},
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "first"},
 		{Role: "user", Content: "again"},
@@ -640,7 +717,7 @@ func TestRunExecutesReadToolCall(t *testing.T) {
 	if len(aiProvider.queries) != 2 {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
-	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "edit", "glob", "grep", "webfetch", "bash"}) {
+	if got := toolNames(aiProvider.queries[0].Tools); !reflect.DeepEqual(got, []string{"read", "write", "edit", "glob", "grep", "webfetch", "bash", "todo"}) {
 		t.Fatalf("expected default tool definitions, got %#v", aiProvider.queries[0].Tools)
 	}
 
@@ -743,7 +820,7 @@ func TestRunWritesProviderErrorsAndContinues(t *testing.T) {
 		t.Fatalf("expected two provider calls, got %d", len(aiProvider.queries))
 	}
 	expectedSecondQuery := []llm.Message{
-		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt()},
+		{Role: llm.RoleSystem, Content: runtime.Session.BuildSystemPrompt() + "\n\n" + todotool.EmptyInstruction},
 		{Role: "user", Content: "hello"},
 	}
 	if !reflect.DeepEqual(aiProvider.queries[1].Messages, expectedSecondQuery) {

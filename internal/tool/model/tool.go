@@ -10,8 +10,9 @@ import (
 type Capability string
 
 const (
-	CapabilityReadOnly Capability = "read-only"
-	CapabilityMutating Capability = "mutating"
+	CapabilityReadOnly   Capability = "read-only"
+	CapabilityMutating   Capability = "mutating"
+	CapabilityAgentState Capability = "agent-state"
 )
 
 type Tool interface {
@@ -32,4 +33,11 @@ type Activity struct {
 	Target  string
 	Command string
 	Output  string
+	Items   []ActivityItem
+}
+
+type ActivityItem struct {
+	ID      string
+	Content string
+	Status  string
 }
